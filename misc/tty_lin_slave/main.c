@@ -39,18 +39,18 @@ int read_header(int tty)
 			break;
 	}
 
-	p0 = ((buff[1] >> 8) ^ (buff[1] >> 7) ^ (buff[1] >> 6) ^ (buff[1] >> 4)) & 0x1;
-	p1 = ~(((buff[1] >> 8) ^ (buff[1] >> 5) ^ (buff[1] >> 4) ^ (buff[1] >> 3))) & 0x1;
+	p0 = (buff[1] ^ (buff[1] >> 1) ^ (buff[1] >> 2) ^ (buff[1] >> 4)) & 0x1;
+	p1 = ~(((buff[1] >> 1) ^ (buff[1] >> 3) ^ (buff[1] >> 4) ^ (buff[1] >> 5))) & 0x1;
 
 	printf("%02X ", buff[0]);
 	printf("%02X ", buff[1]);
 
-	par_rec = buff[1] & 0x3;
-	par_calc = p1 | (p0 << 1);
-	printf("| LIN id: %02X ", buff[1] & 0xfc);
-	printf("| par_rec: %X; par_calc: %X ", par_rec, par_calc);
+	par_rec = (buff[1] & 0xc0) >> 6;
+	par_calc = p0 | (p1 << 1);
+	printf("| LIN id: %02X ", buff[1] & 0x3f);
+	//printf("| par_rec: %X; par_calc: %X ", par_rec, par_calc);
 	if (par_rec == par_calc)
-		printf("parity OK");
+		printf("| parity OK");
 	
 	printf("\n");
 
@@ -95,8 +95,8 @@ static void set_input_mode(int tty)
 	tattr.c_cc[VTIME] = 0;
 
 	/* Set TX, RX speed */
-	cfsetispeed(&tattr, B19200);
-	cfsetospeed(&tattr, B19200);
+	cfsetispeed(&tattr, B9600);
+	cfsetospeed(&tattr, B9600);
 
 	status = tcsetattr(tty, TCSANOW, &tattr);
 	if (status == -1)
