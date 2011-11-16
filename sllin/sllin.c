@@ -58,6 +58,10 @@
 #include <linux/init.h>
 #include <linux/can.h>
 
+/* Should be in include/linux/tty.h */
+#define N_SLLIN         25
+
+
 static __initdata const char banner[] =
 	KERN_INFO "sllin: serial line LIN interface driver\n";
 
@@ -103,124 +107,89 @@ struct sllin {
 
 static struct net_device **sllin_devs;
 
- /************************************************************************
-  *			SLLIN ENCAPSULATION FORMAT			 *
-  ************************************************************************/
 
-/*
- * A CAN frame has a can_id (11 bit standard frame format OR 29 bit extended
- * frame format) a data length code (can_dlc) which can be from 0 to 8
- * and up to <can_dlc> data bytes as payload.
- * Additionally a CAN frame may become a remote transmission frame if the
- * RTR-bit is set. This causes another ECU to send a CAN frame with the
- * given can_id.
- *
- * The SLLIN ASCII representation of these different frame types is:
- * <type> <id> <dlc> <data>*
- *
- * Extended frames (29 bit) are defined by capital characters in the type.
- * RTR frames are defined as 'r' types - normal frames have 't' type:
- * t => 11 bit data frame
- * r => 11 bit RTR frame
- * T => 29 bit data frame
- * R => 29 bit RTR frame
- *
- * The <id> is 3 (standard) or 8 (extended) bytes in ASCII Hex (base64).
- * The <dlc> is a one byte ASCII number ('0' - '8')
- * The <data> section has at much ASCII Hex bytes as defined by the <dlc>
- *
- * Examples:
- *
- * t1230 : can_id 0x123, can_dlc 0, no data
- * t4563112233 : can_id 0x456, can_dlc 3, data 0x11 0x22 0x33
- * T12ABCDEF2AA55 : extended can_id 0x12ABCDEF, can_dlc 2, data 0xAA 0x55
- * r1230 : can_id 0x123, can_dlc 0, no data, remote transmission request
- *
- */
-
- /************************************************************************
-  *			STANDARD SLLIN DECAPSULATION			 *
-  ************************************************************************/
-
-static int asc2nibble(char c)
+static int sltty_change_speed(struct tty_struct *tty, unsigned speed)
 {
+	struct ktermios old_termios;
+	int cflag;
 
-	if ((c >= '0') && (c <= '9'))
-		return c - '0';
+	mutex_lock(&tty->termios_mutex);
+	old_termios = *(tty->termios);
+	cflag = tty->termios->c_cflag;
+	tty_encode_baud_rate(tty, speed, speed);
+	if (tty->ops->set_termios)
+		tty->ops->set_termios(tty, &old_termios);
+	//priv->io.speed = speed;
+	mutex_unlock(&tty->termios_mutex);
 
-	if ((c >= 'A') && (c <= 'F'))
-		return c - 'A' + 10;
-
-	if ((c >= 'a') && (c <= 'f'))
-		return c - 'a' + 10;
-
-	return 16; /* error */
+	return 0;
 }
+
 
 /* Send one completely decapsulated can_frame to the network layer */
 static void sll_bump(struct sllin *sl)
 {
-	struct sk_buff *skb;
-	struct can_frame cf;
-	int i, dlc_pos, tmp;
-	unsigned long ultmp;
-	char cmd = sl->rbuff[0];
-
-	if ((cmd != 't') && (cmd != 'T') && (cmd != 'r') && (cmd != 'R'))
-		return;
-
-	if (cmd & 0x20) /* tiny chars 'r' 't' => standard frame format */
-		dlc_pos = 4; /* dlc position tiiid */
-	else
-		dlc_pos = 9; /* dlc position Tiiiiiiiid */
-
-	if (!((sl->rbuff[dlc_pos] >= '0') && (sl->rbuff[dlc_pos] < '9')))
-		return;
-
-	cf.can_dlc = sl->rbuff[dlc_pos] - '0'; /* get can_dlc from ASCII val */
-
-	sl->rbuff[dlc_pos] = 0; /* terminate can_id string */
-
-	if (strict_strtoul(sl->rbuff+1, 16, &ultmp))
-		return;
-
-	cf.can_id = ultmp;
-
-	if (!(cmd & 0x20)) /* NO tiny chars => extended frame format */
-		cf.can_id |= CAN_EFF_FLAG;
-
-	if ((cmd | 0x20) == 'r') /* RTR frame */
-		cf.can_id |= CAN_RTR_FLAG;
-
-	*(u64 *) (&cf.data) = 0; /* clear payload */
-
-	for (i = 0, dlc_pos++; i < cf.can_dlc; i++) {
-
-		tmp = asc2nibble(sl->rbuff[dlc_pos++]);
-		if (tmp > 0x0F)
-			return;
-		cf.data[i] = (tmp << 4);
-		tmp = asc2nibble(sl->rbuff[dlc_pos++]);
-		if (tmp > 0x0F)
-			return;
-		cf.data[i] |= tmp;
-	}
-
-
-	skb = dev_alloc_skb(sizeof(struct can_frame));
-	if (!skb)
-		return;
-
-	skb->dev = sl->dev;
-	skb->protocol = htons(ETH_P_CAN);
-	skb->pkt_type = PACKET_BROADCAST;
-	skb->ip_summed = CHECKSUM_UNNECESSARY;
-	memcpy(skb_put(skb, sizeof(struct can_frame)),
-	       &cf, sizeof(struct can_frame));
-	netif_rx(skb);
-
-	sl->dev->stats.rx_packets++;
-	sl->dev->stats.rx_bytes += cf.can_dlc;
+//	struct sk_buff *skb;
+//	struct can_frame cf;
+//	int i, dlc_pos, tmp;
+//	unsigned long ultmp;
+//	char cmd = sl->rbuff[0];
+//
+//	if ((cmd != 't') && (cmd != 'T') && (cmd != 'r') && (cmd != 'R'))
+//		return;
+//
+//	if (cmd & 0x20) /* tiny chars 'r' 't' => standard frame format */
+//		dlc_pos = 4; /* dlc position tiiid */
+//	else
+//		dlc_pos = 9; /* dlc position Tiiiiiiiid */
+//
+//	if (!((sl->rbuff[dlc_pos] >= '0') && (sl->rbuff[dlc_pos] < '9')))
+//		return;
+//
+//	cf.can_dlc = sl->rbuff[dlc_pos] - '0'; /* get can_dlc from ASCII val */
+//
+//	sl->rbuff[dlc_pos] = 0; /* terminate can_id string */
+//
+//	if (strict_strtoul(sl->rbuff+1, 16, &ultmp))
+//		return;
+//
+//	cf.can_id = ultmp;
+//
+//	if (!(cmd & 0x20)) /* NO tiny chars => extended frame format */
+//		cf.can_id |= CAN_EFF_FLAG;
+//
+//	if ((cmd | 0x20) == 'r') /* RTR frame */
+//		cf.can_id |= CAN_RTR_FLAG;
+//
+//	*(u64 *) (&cf.data) = 0; /* clear payload */
+//
+//	for (i = 0, dlc_pos++; i < cf.can_dlc; i++) {
+//
+//		tmp = asc2nibble(sl->rbuff[dlc_pos++]);
+//		if (tmp > 0x0F)
+//			return;
+//		cf.data[i] = (tmp << 4);
+//		tmp = asc2nibble(sl->rbuff[dlc_pos++]);
+//		if (tmp > 0x0F)
+//			return;
+//		cf.data[i] |= tmp;
+//	}
+//
+//
+//	skb = dev_alloc_skb(sizeof(struct can_frame));
+//	if (!skb)
+//		return;
+//
+//	skb->dev = sl->dev;
+//	skb->protocol = htons(ETH_P_CAN);
+//	skb->pkt_type = PACKET_BROADCAST;
+//	skb->ip_summed = CHECKSUM_UNNECESSARY;
+//	memcpy(skb_put(skb, sizeof(struct can_frame)),
+//	       &cf, sizeof(struct can_frame));
+//	netif_rx(skb);
+//
+//	sl->dev->stats.rx_packets++;
+//	sl->dev->stats.rx_bytes += cf.can_dlc;
 }
 
 /* parse tty input stream */
@@ -250,44 +219,48 @@ static void sllin_unesc(struct sllin *sl, unsigned char s)
   *			STANDARD SLLIN ENCAPSULATION			 *
   ************************************************************************/
 
-/* Encapsulate one can_frame and stuff into a TTY queue. */
+/* Convert particular CAN frame into LIN frame and send it to TTY queue. */
 static void sll_encaps(struct sllin *sl, struct can_frame *cf)
 {
 	int actual, idx, i;
-	char cmd;
+	char lframe[16] = {0x00, 0x55}; /* Fake break, Sync byte */
+	struct tty_struct *tty = sl->tty;
 
-	if (cf->can_id & CAN_RTR_FLAG)
-		cmd = 'R'; /* becomes 'r' in standard frame format */
-	else
-		cmd = 'T'; /* becomes 't' in standard frame format */
-
+	/* We do care only about SFF frames */
 	if (cf->can_id & CAN_EFF_FLAG)
-		sprintf(sl->xbuff, "%c%08X%d", cmd,
-			cf->can_id & CAN_EFF_MASK, cf->can_dlc);
-	else
-		sprintf(sl->xbuff, "%c%03X%d", cmd | 0x20,
-			cf->can_id & CAN_SFF_MASK, cf->can_dlc);
+		return;
 
-	idx = strlen(sl->xbuff);
+	/* Send only header */
+	if (cf->can_id & CAN_RTR_FLAG) {
+		lframe[2] = (u8)cf->can_id; /* Get one byte LIN ID */
 
-	for (i = 0; i < cf->can_dlc; i++)
-		sprintf(&sl->xbuff[idx + 2*i], "%02X", cf->data[i]);
+		sltty_change_speed(tty, 1200);
+		tty->ops->write(tty, &lframe[0], 1);
+		sltty_change_speed(tty, 2400);
+		tty->ops->write(tty, &lframe[1], 1);
+		tty->ops->write(tty, &lframe[2], 1);
+	} else {
+		/*	idx = strlen(sl->xbuff);
 
-	strcat(sl->xbuff, "\r"); /* add terminating character */
+			for (i = 0; i < cf->can_dlc; i++)
+			sprintf(&sl->xbuff[idx + 2*i], "%02X", cf->data[i]);
 
-	/* Order of next two lines is *very* important.
-	 * When we are sending a little amount of data,
-	 * the transfer may be completed inside the ops->write()
-	 * routine, because it's running with interrupts enabled.
-	 * In this case we *never* got WRITE_WAKEUP event,
-	 * if we did not request it before write operation.
-	 *       14 Oct 1994  Dmitry Gorodchanin.
-	 */
-	set_bit(TTY_DO_WRITE_WAKEUP, &sl->tty->flags);
-	actual = sl->tty->ops->write(sl->tty, sl->xbuff, strlen(sl->xbuff));
-	sl->xleft = strlen(sl->xbuff) - actual;
-	sl->xhead = sl->xbuff + actual;
-	sl->dev->stats.tx_bytes += cf->can_dlc;
+		 * Order of next two lines is *very* important.
+		 * When we are sending a little amount of data,
+		 * the transfer may be completed inside the ops->write()
+		 * routine, because it's running with interrupts enabled.
+		 * In this case we *never* got WRITE_WAKEUP event,
+		 * if we did not request it before write operation.
+		 *       14 Oct 1994  Dmitry Gorodchanin.
+
+		 set_bit(TTY_DO_WRITE_WAKEUP, &sl->tty->flags);
+		 actual = sl->tty->ops->write(sl->tty, sl->xbuff, strlen(sl->xbuff));
+		 sl->xleft = strlen(sl->xbuff) - actual;
+		 sl->xhead = sl->xbuff + actual;
+		 sl->dev->stats.tx_bytes += cf->can_dlc;
+		 */
+	}
+
 }
 
 /*
