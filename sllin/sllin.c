@@ -61,7 +61,6 @@
 /* Should be in include/linux/tty.h */
 #define N_SLLIN         25
 
-
 static __initdata const char banner[] =
 	KERN_INFO "sllin: serial line LIN interface driver\n";
 
@@ -226,12 +225,15 @@ static void sll_encaps(struct sllin *sl, struct can_frame *cf)
 	char lframe[16] = {0x00, 0x55}; /* Fake break, Sync byte */
 	struct tty_struct *tty = sl->tty;
 
+	pr_debug("sllin: %s() invoked\n", __FUNCTION__);
+
 	/* We do care only about SFF frames */
 	if (cf->can_id & CAN_EFF_FLAG)
 		return;
 
 	/* Send only header */
 	if (cf->can_id & CAN_RTR_FLAG) {
+		pr_debug("sllin: RTR CAN frame\n", __FUNCTION__);
 		lframe[2] = (u8)cf->can_id; /* Get one byte LIN ID */
 
 		sltty_change_speed(tty, 1200);
@@ -240,6 +242,7 @@ static void sll_encaps(struct sllin *sl, struct can_frame *cf)
 		tty->ops->write(tty, &lframe[1], 1);
 		tty->ops->write(tty, &lframe[2], 1);
 	} else {
+		pr_debug("sllin: non-RTR CAN frame\n", __FUNCTION__);
 		/*	idx = strlen(sl->xbuff);
 
 			for (i = 0; i < cf->can_dlc; i++)
@@ -345,6 +348,8 @@ static int sll_close(struct net_device *dev)
 static int sll_open(struct net_device *dev)
 {
 	struct sllin *sl = netdev_priv(dev);
+
+	pr_debug("sllin: %s() invoked\n", __FUNCTION__);
 
 	if (sl->tty == NULL)
 		return -ENODEV;
@@ -507,6 +512,7 @@ static int sllin_open(struct tty_struct *tty)
 {
 	struct sllin *sl;
 	int err;
+	pr_debug("sllin: %s() invoked\n", __FUNCTION__);
 
 	if (!capable(CAP_NET_ADMIN))
 		return -EPERM;
