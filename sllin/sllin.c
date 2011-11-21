@@ -57,6 +57,7 @@
 #include <linux/delay.h>
 #include <linux/init.h>
 #include <linux/can.h>
+#include <linux/kthread.h>
 
 /* Should be in include/linux/tty.h */
 #define N_SLLIN         25
@@ -101,7 +102,8 @@ struct sllin {
 
 	unsigned char		leased;
 	dev_t			line;
-	pid_t			pid;
+	struct task_struct	*kwthread;
+	wait_queue_head_t	kwt_wq;
 };
 
 static struct net_device **sllin_devs;
@@ -233,7 +235,7 @@ static void sll_encaps(struct sllin *sl, struct can_frame *cf)
 
 	/* Send only header */
 	if (cf->can_id & CAN_RTR_FLAG) {
-		pr_debug("sllin: RTR CAN frame\n", __FUNCTION__);
+		pr_debug("sllin: %s() RTR CAN frame\n", __FUNCTION__);
 		lframe[2] = (u8)cf->can_id; /* Get one byte LIN ID */
 
 		sltty_change_speed(tty, 1200);
@@ -242,7 +244,7 @@ static void sll_encaps(struct sllin *sl, struct can_frame *cf)
 		tty->ops->write(tty, &lframe[1], 1);
 		tty->ops->write(tty, &lframe[2], 1);
 	} else {
-		pr_debug("sllin: non-RTR CAN frame\n", __FUNCTION__);
+		pr_debug("sllin: %s() non-RTR CAN frame\n", __FUNCTION__);
 		/*	idx = strlen(sl->xbuff);
 
 			for (i = 0; i < cf->can_dlc; i++)
@@ -423,6 +425,28 @@ static void sllin_receive_buf(struct tty_struct *tty,
 	}
 }
 
+/*****************************************
+ *  sllin_kwthread - kernel worker thread
+ *****************************************/
+
+int sllin_kwthread(void *ptr)
+{
+	struct sllin *sl = (struct sllin *)ptr;
+
+	printk(KERN_INFO "sllin: sllin_kwthread started.\n");
+
+	while (!kthread_should_stop()) {
+		
+		wait_event_killable(sl->kwt_wq, kthread_should_stop());
+
+	}
+
+	printk(KERN_INFO "sllin: sllin_kwthread stopped.\n");
+
+	return 0;
+}
+
+
 /************************************
  *  sllin_open helper routines.
  ************************************/
@@ -545,7 +569,6 @@ static int sllin_open(struct tty_struct *tty)
 	sl->tty = tty;
 	tty->disc_data = sl;
 	sl->line = tty_devnum(tty);
-	sl->pid = current->pid;
 
 	if (!test_bit(SLF_INUSE, &sl->flags)) {
 		/* Perform the low-level SLLIN initialization. */
@@ -554,9 +577,14 @@ static int sllin_open(struct tty_struct *tty)
 
 		set_bit(SLF_INUSE, &sl->flags);
 
+		init_waitqueue_head(&sl->kwt_wq);
+		sl->kwthread = kthread_run(sllin_kwthread, sl, "sllin");
+		if (sl->kwthread == NULL)
+			goto err_free_chan;
+
 		err = register_netdevice(sl->dev);
 		if (err)
-			goto err_free_chan;
+			goto err_free_chan_and_thread;
 	}
 
 	/* Done.  We have linked the TTY line to a channel. */
@@ -565,6 +593,10 @@ static int sllin_open(struct tty_struct *tty)
 
 	/* TTY layer expects 0 on success */
 	return 0;
+
+err_free_chan_and_thread:
+	kthread_stop(sl->kwthread);
+	sl->kwthread = NULL;
 
 err_free_chan:
 	sl->tty = NULL;
@@ -593,6 +625,9 @@ static void sllin_close(struct tty_struct *tty)
 	/* First make sure we're connected. */
 	if (!sl || sl->magic != SLLIN_MAGIC || sl->tty != tty)
 		return;
+
+	kthread_stop(sl->kwthread);
+	sl->kwthread = NULL;
 
 	tty->disc_data = NULL;
 	sl->tty = NULL;
