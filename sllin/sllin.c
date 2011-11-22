@@ -78,8 +78,22 @@ static int maxdev = 10;		/* MAX number of SLLIN channels;
 module_param(maxdev, int, 0);
 MODULE_PARM_DESC(maxdev, "Maximum number of sllin interfaces");
 
-/* maximum rx buffer len: extended CAN frame with timestamp */
-#define SLC_MTU (sizeof("T1111222281122334455667788EA5F\r")+1)
+/* maximum buffer len to store whole LIN message*/
+#define SLLIN_DATA_MAX	 8
+#define SLLIN_BUFF_LEN	(1 /*break*/ + 1 /*sync*/ + 1 /*ID*/ + \
+                         SLLIN_DATA_MAX + 1 /*checksum*/)
+#define SLLIN_BUFF_BREAK 0
+#define SLLIN_BUFF_SYNC	 1
+#define SLLIN_BUFF_ID	 2
+#define SLLIN_BUFF_DATA	 3
+
+enum slstate {
+	SLSTATE_IDLE = 0,
+	SLSTATE_BREAK_SENT,
+	SLSTATE_ID_SENT,
+	SLSTATE_RESPONSE_WAIT,
+	SLSTATE_RESPONSE_SENT,
+};
 
 struct sllin {
 	int			magic;
@@ -89,16 +103,25 @@ struct sllin {
 	struct net_device	*dev;		/* easy for intr handling    */
 	spinlock_t		lock;
 
-	/* These are pointers to the malloc()ed frame buffers. */
-	unsigned char		rbuff[SLC_MTU];	/* receiver buffer	     */
-	int			rcount;         /* received chars counter    */
-	unsigned char		xbuff[SLC_MTU];	/* transmitter buffer	     */
-	unsigned char		*xhead;         /* pointer to next XMIT byte */
-	int			xleft;          /* bytes left in XMIT queue  */
+	/* LIN message buffer and actual processed data counts */
+	unsigned char		rx_buff[SLLIN_BUFF_LEN]; /* LIN Rx buffer */
+	unsigned char		tx_buff[SLLIN_BUFF_LEN]; /* LIN Tx buffer */
+	int			rx_expect;      /* expected number of Rx chars */
+	int			rx_lim;         /* maximum Rx chars for ID  */
+	int			rx_cnt;         /* message buffer Rx fill level  */
+	int			tx_lim;         /* actual limit of bytes to Tx */
+	int			tx_cnt;         /* number of already Tx bytes */
+	char			lin_master;	/* node is a master node */
+	int			lin_baud;	/* LIN baudrate */
+	int 			lin_state;	/* state */
+	int 			id_to_sent;	/* there is ID to be sent */
 
 	unsigned long		flags;		/* Flag values/ mode etc     */
 #define SLF_INUSE		0		/* Channel in use            */
 #define SLF_ERROR		1               /* Parity, etc. error        */
+#define SLF_RXEVENT		2               /* Rx wake event             */
+#define SLF_TXEVENT		3               /* Tx wake event             */
+#define SLF_MSGEVENT		4               /* CAN message to sent       */
 
 	unsigned char		leased;
 	dev_t			line;
@@ -108,6 +131,16 @@ struct sllin {
 
 static struct net_device **sllin_devs;
 
+const unsigned char sllin_id_parity_table[] = {
+        0x80,0xc0,0x40,0x00,0xc0,0x80,0x00,0x40,
+        0x00,0x40,0xc0,0x80,0x40,0x00,0x80,0xc0,
+        0x40,0x00,0x80,0xc0,0x00,0x40,0xc0,0x80,
+        0xc0,0x80,0x00,0x40,0x80,0xc0,0x40,0x00,
+        0x00,0x40,0xc0,0x80,0x40,0x00,0x80,0xc0,
+        0x80,0xc0,0x40,0x00,0xc0,0x80,0x00,0x40,
+        0xc0,0x80,0x00,0x40,0x80,0xc0,0x40,0x00,
+        0x40,0x00,0x80,0xc0,0x00,0x40,0xc0,0x80
+};
 
 static int sltty_change_speed(struct tty_struct *tty, unsigned speed)
 {
@@ -193,28 +226,6 @@ static void sll_bump(struct sllin *sl)
 //	sl->dev->stats.rx_bytes += cf.can_dlc;
 }
 
-/* parse tty input stream */
-static void sllin_unesc(struct sllin *sl, unsigned char s)
-{
-
-	if ((s == '\r') || (s == '\a')) { /* CR or BEL ends the pdu */
-		if (!test_and_clear_bit(SLF_ERROR, &sl->flags) &&
-		    (sl->rcount > 4))  {
-			sll_bump(sl);
-		}
-		sl->rcount = 0;
-	} else {
-		if (!test_bit(SLF_ERROR, &sl->flags))  {
-			if (sl->rcount < SLC_MTU)  {
-				sl->rbuff[sl->rcount++] = s;
-				return;
-			} else {
-				sl->dev->stats.rx_over_errors++;
-				set_bit(SLF_ERROR, &sl->flags);
-			}
-		}
-	}
-}
 
  /************************************************************************
   *			STANDARD SLLIN ENCAPSULATION			 *
@@ -238,9 +249,9 @@ static void sll_encaps(struct sllin *sl, struct can_frame *cf)
 		pr_debug("sllin: %s() RTR CAN frame\n", __FUNCTION__);
 		lframe[2] = (u8)cf->can_id; /* Get one byte LIN ID */
 
-		sltty_change_speed(tty, 1200);
+		sltty_change_speed(tty, sl->lin_baud / 2);
 		tty->ops->write(tty, &lframe[0], 1);
-		sltty_change_speed(tty, 2400);
+		sltty_change_speed(tty, sl->lin_baud);
 		tty->ops->write(tty, &lframe[1], 1);
 		tty->ops->write(tty, &lframe[2], 1);
 	} else {
@@ -275,24 +286,30 @@ static void sll_encaps(struct sllin *sl, struct can_frame *cf)
 static void sllin_write_wakeup(struct tty_struct *tty)
 {
 	int actual;
+	int remains;
 	struct sllin *sl = (struct sllin *) tty->disc_data;
 
 	/* First make sure we're connected. */
 	if (!sl || sl->magic != SLLIN_MAGIC || !netif_running(sl->dev))
 		return;
 
-	if (sl->xleft <= 0)  {
-		/* Now serial buffer is almost free & we can start
-		 * transmission of another packet */
-		sl->dev->stats.tx_packets++;
-		clear_bit(TTY_DO_WRITE_WAKEUP, &tty->flags);
-		netif_wake_queue(sl->dev);
-		return;
+	if (sl->lin_state != SLSTATE_BREAK_SENT)
+		remains = sl->tx_lim - sl->tx_cnt;
+	else
+		remains = SLLIN_BUFF_BREAK + 1 - sl->tx_cnt;
+
+	if (remains > 0) {
+		actual = tty->ops->write(tty, sl->tx_buff + sl->tx_cnt, sl->tx_cnt - sl->tx_lim);
+		sl->tx_cnt += actual;
+
+		if(sl->tx_cnt < sl->tx_lim)
+			return;
 	}
 
-	actual = tty->ops->write(tty, sl->xhead, sl->xleft);
-	sl->xleft -= actual;
-	sl->xhead += actual;
+	clear_bit(TTY_DO_WRITE_WAKEUP, &tty->flags);
+	set_bit(SLF_TXEVENT, &sl->flags);
+	wake_up(&sl->kwt_wq);
+
 }
 
 /* Send a can_frame to a TTY queue. */
@@ -339,8 +356,8 @@ static int sll_close(struct net_device *dev)
 		clear_bit(TTY_DO_WRITE_WAKEUP, &sl->tty->flags);
 	}
 	netif_stop_queue(dev);
-	sl->rcount   = 0;
-	sl->xleft    = 0;
+	sl->rx_expect = 0;
+	sl->tx_lim    = 0;
 	spin_unlock_bh(&sl->lock);
 
 	return 0;
@@ -421,8 +438,100 @@ static void sllin_receive_buf(struct tty_struct *tty,
 			cp++;
 			continue;
 		}
-		sllin_unesc(sl, *cp++);
+
+		if (sl->rx_cnt < SLLIN_BUFF_LEN)  {
+			sl->rx_buff[sl->rx_cnt++] = *cp++;
+		}
 	}
+
+	if(sl->rx_cnt >= sl->rx_expect) {
+		set_bit(SLF_RXEVENT, &sl->flags);
+		wake_up(&sl->kwt_wq);
+	}
+}
+
+/*****************************************
+ *  sllin message helper routines
+ *****************************************/
+
+int sllin_setup_msg(struct sllin *sl, int mode, int id,
+		unsigned char *data, int len)
+{
+	if (id > 0x3f)
+		return -1;
+
+	sl->rx_cnt = 0;
+	sl->tx_cnt = 0;
+	sl->rx_expect = 0;
+
+	sl->tx_buff[SLLIN_BUFF_BREAK] = 0;
+	sl->tx_buff[SLLIN_BUFF_SYNC]  = 0x55;
+	sl->tx_buff[SLLIN_BUFF_ID]    = id | sllin_id_parity_table[id];
+	sl->tx_lim = SLLIN_BUFF_DATA;
+
+	if ((data != NULL) && len) {
+		sl->tx_lim += len;
+		memcpy(sl->tx_buff + SLLIN_BUFF_DATA, data, len);
+	}
+	sl->rx_lim += len;
+
+	return 0;
+}
+
+
+int sllin_send_tx_buff(struct sllin *sl)
+{
+	struct tty_struct *tty = sl->tty;
+	int remains;
+	int res;
+
+	if (sl->lin_state != SLSTATE_BREAK_SENT)
+		remains = sl->tx_lim - sl->tx_cnt;
+	else
+		remains = 1;
+
+
+	res = tty->ops->write(tty, sl->tx_buff + sl->tx_cnt, remains);
+	if (res < 0)
+		return -1;
+
+	remains -= res;
+	sl->tx_cnt += res;
+
+	if (remains > 0) {
+		set_bit(TTY_DO_WRITE_WAKEUP, &tty->flags);
+		res = tty->ops->write(tty, sl->tx_buff + sl->tx_cnt, remains);
+		if (res < 0) {
+			clear_bit(TTY_DO_WRITE_WAKEUP, &tty->flags);
+			return -1;
+		}
+	}
+	sl->tx_cnt += res;
+
+	return 0;
+}
+
+int sllin_send_break(struct sllin *sl)
+{
+	struct tty_struct *tty = sl->tty;
+	unsigned long break_baud = sl->lin_baud;
+	int res;
+
+	break_baud = (break_baud * 8) / 14;
+
+	sltty_change_speed(tty, break_baud);
+
+	sl->rx_expect = SLLIN_BUFF_BREAK + 1;
+
+	sl->lin_state = SLSTATE_BREAK_SENT;
+
+	res = sllin_send_tx_buff(sl);
+	if (res < 0) {
+		sl->lin_state = SLSTATE_IDLE;
+		return res;
+	}
+
+	return 0;
 }
 
 /*****************************************
@@ -432,14 +541,61 @@ static void sllin_receive_buf(struct tty_struct *tty,
 int sllin_kwthread(void *ptr)
 {
 	struct sllin *sl = (struct sllin *)ptr;
+	struct tty_struct *tty = sl->tty;
+	int res;
 
 	printk(KERN_INFO "sllin: sllin_kwthread started.\n");
 
-	while (!kthread_should_stop()) {
-		
-		wait_event_killable(sl->kwt_wq, kthread_should_stop());
+	clear_bit(SLF_ERROR, &sl->flags);
 
+	sltty_change_speed(tty, sl->lin_baud);
+
+	sllin_setup_msg(sl, 0, 0x33, NULL, 0);
+
+	while (!kthread_should_stop()) {
+
+		if ((sl->lin_state == SLSTATE_IDLE) && sl->lin_master &&
+			sl->id_to_sent) {
+			if(sllin_send_break(sl)<0) {
+				/* error processing */
+			}
+
+		}
+
+		wait_event_killable(sl->kwt_wq, kthread_should_stop() ||
+			test_bit(SLF_RXEVENT, &sl->flags) ||
+			test_bit(SLF_TXEVENT, &sl->flags));
+
+		if (test_and_clear_bit(SLF_RXEVENT, &sl->flags)) {
+
+		}
+
+		if (test_and_clear_bit(SLF_TXEVENT, &sl->flags)) {
+
+		}
+
+		switch (sl->lin_state) {
+			case SLSTATE_BREAK_SENT:
+				if (sl->rx_cnt <= SLLIN_BUFF_BREAK)
+					continue;
+
+				res = sltty_change_speed(tty, sl->lin_baud);
+
+				sllin_send_tx_buff(sl);
+
+				sl->lin_state = SLSTATE_ID_SENT;
+
+				break;
+		}
+
+
+
+		/* sll_bump(sl); send packet to the network layer */
+
+		/* sl->dev->stats.tx_packets++; send frames statistic */
+		/* netif_wake_queue(sl->dev); allow next Tx packet arrival */
 	}
+
 
 	printk(KERN_INFO "sllin: sllin_kwthread stopped.\n");
 
@@ -572,8 +728,15 @@ static int sllin_open(struct tty_struct *tty)
 
 	if (!test_bit(SLF_INUSE, &sl->flags)) {
 		/* Perform the low-level SLLIN initialization. */
-		sl->rcount   = 0;
-		sl->xleft    = 0;
+		sl->rx_cnt    = 0;
+		sl->rx_expect = 0;
+		sl->tx_cnt    = 0;
+		sl->tx_lim    = 0;
+
+		sl->lin_baud  = 2400;
+
+		sl->lin_master = 1;
+		sl->lin_state = SLSTATE_IDLE;
 
 		set_bit(SLF_INUSE, &sl->flags);
 
@@ -589,7 +752,7 @@ static int sllin_open(struct tty_struct *tty)
 
 	/* Done.  We have linked the TTY line to a channel. */
 	rtnl_unlock();
-	tty->receive_room = 65536;	/* We don't flow control */
+	tty->receive_room = SLLIN_BUFF_LEN * 40;	/* We don't flow control */
 
 	/* TTY layer expects 0 on success */
 	return 0;
