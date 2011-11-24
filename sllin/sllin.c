@@ -114,7 +114,7 @@ struct sllin {
 	char			lin_master;	/* node is a master node */
 	int			lin_baud;	/* LIN baudrate */
 	int 			lin_state;	/* state */
-	int 			id_to_sent;	/* there is ID to be sent */
+	int 			id_to_send;	/* there is ID to be sent */
 
 	unsigned long		flags;		/* Flag values/ mode etc     */
 #define SLF_INUSE		0		/* Channel in use            */
@@ -302,14 +302,18 @@ static void sllin_write_wakeup(struct tty_struct *tty)
 		actual = tty->ops->write(tty, sl->tx_buff + sl->tx_cnt, sl->tx_cnt - sl->tx_lim);
 		sl->tx_cnt += actual;
 
-		if(sl->tx_cnt < sl->tx_lim)
+		if (sl->tx_cnt < sl->tx_lim) {
+			printk(KERN_INFO "sllin_write_wakeup sent %d, remains %d, waiting\n",
+				sl->tx_cnt, sl->tx_lim - sl->tx_cnt);
 			return;
+		}
 	}
 
 	clear_bit(TTY_DO_WRITE_WAKEUP, &tty->flags);
 	set_bit(SLF_TXEVENT, &sl->flags);
 	wake_up(&sl->kwt_wq);
 
+	printk(KERN_INFO "sllin_write_wakeup sent %d, wakeup\n", sl->tx_cnt);
 }
 
 /* Send a can_frame to a TTY queue. */
@@ -427,6 +431,8 @@ static void sllin_receive_buf(struct tty_struct *tty,
 {
 	struct sllin *sl = (struct sllin *) tty->disc_data;
 
+	printk(KERN_INFO "sllin_receive_buf invoked\n");
+
 	if (!sl || sl->magic != SLLIN_MAGIC || !netif_running(sl->dev))
 		return;
 
@@ -447,6 +453,9 @@ static void sllin_receive_buf(struct tty_struct *tty,
 	if(sl->rx_cnt >= sl->rx_expect) {
 		set_bit(SLF_RXEVENT, &sl->flags);
 		wake_up(&sl->kwt_wq);
+		printk(KERN_INFO "sllin_receive_buf count %d, wakeup\n", sl->rx_cnt);
+	} else {
+		printk(KERN_INFO "sllin_receive_buf count %d, waiting\n", sl->rx_cnt);
 	}
 }
 
@@ -505,8 +514,13 @@ int sllin_send_tx_buff(struct sllin *sl)
 			clear_bit(TTY_DO_WRITE_WAKEUP, &tty->flags);
 			return -1;
 		}
+		
+		remains -= res;
+		sl->tx_cnt += res;
 	}
-	sl->tx_cnt += res;
+
+	printk(KERN_INFO "sllin_send_tx_buff sent %d, remains %d\n",
+			sl->tx_cnt, remains);
 
 	return 0;
 }
@@ -517,7 +531,8 @@ int sllin_send_break(struct sllin *sl)
 	unsigned long break_baud = sl->lin_baud;
 	int res;
 
-	break_baud = (break_baud * 8) / 14;
+	//break_baud = (break_baud * 8) / 14;
+	break_baud /= 2;
 
 	sltty_change_speed(tty, break_baud);
 
@@ -551,11 +566,12 @@ int sllin_kwthread(void *ptr)
 	sltty_change_speed(tty, sl->lin_baud);
 
 	sllin_setup_msg(sl, 0, 0x33, NULL, 0);
+	sl->id_to_send = 1;
 
 	while (!kthread_should_stop()) {
 
 		if ((sl->lin_state == SLSTATE_IDLE) && sl->lin_master &&
-			sl->id_to_sent) {
+			sl->id_to_send) {
 			if(sllin_send_break(sl)<0) {
 				/* error processing */
 			}
@@ -567,11 +583,11 @@ int sllin_kwthread(void *ptr)
 			test_bit(SLF_TXEVENT, &sl->flags));
 
 		if (test_and_clear_bit(SLF_RXEVENT, &sl->flags)) {
-
+			printk(KERN_INFO "sllin_kthread RXEVENT \n");
 		}
 
 		if (test_and_clear_bit(SLF_TXEVENT, &sl->flags)) {
-
+			printk(KERN_INFO "sllin_kthread TXEVENT \n");
 		}
 
 		switch (sl->lin_state) {
@@ -585,6 +601,10 @@ int sllin_kwthread(void *ptr)
 
 				sl->lin_state = SLSTATE_ID_SENT;
 
+				break;
+			case SLSTATE_ID_SENT:
+				sl->id_to_send = 0;
+				sl->lin_state = SLSTATE_IDLE;
 				break;
 		}
 
