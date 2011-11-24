@@ -14,11 +14,12 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <time.h> /* clock_nanosleep */
+#include <getopt.h>
 
 #define LIN_HDR_SIZE		2
 #define LIN_PKT_MAX_SIZE	16 /* FIXME */
 
-const int lin_baudrate = 19200;
+int lin_baudrate = 19200;
 int lin_break_baud = 0;
 
 struct termios tattr_orig;
@@ -202,19 +203,70 @@ int read_header(int tty)
 	return 0;
 }
 
+static void usage(void)
+{
+	printf("Usage: lin_master <parameters>\n\n");
+	printf("Mandatory parameters:\n");
+	printf("  -d, --device <device>   Device name, e.g. /dev/ttyS0\n\n");
+	printf("Optional parameters:\n");
+	printf("  -B, --baud <baud>       LIN bus baudrate. Default value is 19200.\n");
+	printf("                          Recommendet values are 2400, 9600, 19200\n");
+	printf("  -i, --id <num>          LIN frame ID\n");
+	printf("  -r, --response <num>    Values of data fields sent from slave task\n");
+	printf("  -h, --help              Help, i.e. this screen\n");
+}
 
 int main(int argc, char* argv[])
 {
-	char dev[32];
+	static struct option long_opts[] = {
+		{"device"  , 1, 0, 'd'},
+		{"baud"    , 1, 0, 'B'},
+		{"id"      , 1, 0, 'i'},
+		{"response", 1, 0, 'r'},
+		{"help"    , 0, 0, 'h'},
+		{0, 0, 0, 0}
+	};
+	int opt;
+	char dev[32] = {'\0'};
 	int tty;
 
-	if (argc < 2) {
-		fprintf(stderr, "Device is missing\n");
-		fprintf(stderr, "Usage: %s DEVICE\n", argv[0]);
-		return -3;
+	while ((opt = getopt_long(argc, argv, "d:B:i:r:h", &long_opts[0], NULL)) != EOF) {
+		switch (opt) {
+			case 'd':
+				strncpy((char*)&dev, optarg, 32);
+				break;
+
+			case 'B':
+				lin_baudrate = atoi(optarg);
+				break;
+
+			case 'i':
+				break;
+
+			case 'r':
+				break;
+
+			case 'h':
+			default:
+				usage();
+				exit(opt == 'h' ? 0 : 1);
+				break;
+		}
 	}
 
-	strncpy((char*)&dev, argv[1], 32);
+	if (optind < argc) {
+		usage();
+		//fprintf(stderr, "Expected argument after options\n");
+		exit(EXIT_FAILURE);
+	}
+
+	/* Device name was not set by user */
+	if (strlen(dev) == 0) {
+		usage();
+		exit(EXIT_FAILURE);
+	}
+
+	/* ----------------------------------- */
 	tty = open(dev, O_RDWR);
 	if (tty < 0) {
 		perror("open()");
