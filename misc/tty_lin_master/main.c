@@ -1,5 +1,5 @@
 /*
- * PCAN-LIN, RS-232 to CAN/LIN converter control application
+ * UART-LIN master implementation
  */
 
 #include <stdio.h>
@@ -18,7 +18,7 @@
 #define LIN_HDR_SIZE		2
 #define LIN_PKT_MAX_SIZE	16 /* FIXME */
 
-int lin_baudrate = B19200;
+const int lin_baudrate = 19200;
 int lin_break_baud = 0;
 
 struct termios tattr_orig;
@@ -30,17 +30,32 @@ static void reset_input_mode(int tty)
 	tcsetattr(tty, TCSANOW, &tattr_orig);
 }
 
-static void set_input_mode(int tty, speed_t speed)
+static void set_uart_baudrate(int tty, int speed)
 {
-	int status;
+	/* Set "non-standard" baudrate in serial_struct struct */
+	sattr.flags &= (~ASYNC_SPD_MASK);
+	sattr.flags |= (ASYNC_SPD_CUST);
+	sattr.custom_divisor = ((sattr.baud_base) / speed);
+	if (ioctl(tty, TIOCSSERIAL, &sattr) < 0)
+	{
+		perror("ioctl()");
+	}
 
+//	cfsetispeed(&tattr, B38400);
+//	cfsetospeed(&tattr, B38400);
+//
+//	if (tcsetattr(tty, TCSANOW, &tattr) == -1)	
+//		perror("tcsetattr()");
+}
+
+static void set_input_mode(int tty)
+{
 	/* Flush input and output queues. */
 	if (tcflush(tty, TCIOFLUSH) != 0) {
 		perror("tcflush");
 		exit(EXIT_FAILURE);
 	}
 
-	/* Fetch the current terminal parameters. */
 	if(!isatty(tty)) {
 		fprintf(stderr, "Not a terminal.\n");
 		exit(EXIT_FAILURE);
@@ -48,20 +63,24 @@ static void set_input_mode(int tty, speed_t speed)
 
 	/* Save settings for later restoring */
 	tcgetattr(tty, &tattr_orig);
-	if (ioctl(tty, TIOCGSERIAL, &sattr) < 0) {
-		perror("ioctl()");
-	}
 
-	/* RAW mode */
+	/* Save settings into global variables for later use */
 	tcgetattr(tty, &tattr);
-//	tattr.c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP
-//				| INLCR | IGNCR | ICRNL | IXON);
-//	tattr.c_oflag &= ~OPOST;
-//	tattr.c_lflag &= ~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
-//	tattr.c_cflag &= ~(CSIZE | PARENB);
-//	tattr.c_cflag |= CS8;
+	if (ioctl(tty, TIOCGSERIAL, &sattr) < 0)
+		perror("ioctl()");
 
-	/* Sets hardware control flags: */
+	/* Set RAW mode */
+#if 0
+	tattr.c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP
+				| INLCR | IGNCR | ICRNL | IXON);
+	tattr.c_oflag &= ~OPOST;
+	tattr.c_lflag &= ~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
+	tattr.c_cflag &= ~(CSIZE | PARENB);
+	tattr.c_cflag |= CS8;
+
+	tattr.c_cc[VMIN] = 1;
+	tattr.c_cc[VTIME] = 0;
+#else
 	/* 8 data bits                  */
 	/* Enable receiver              */
 	/* Ignore CD (local connection) */
@@ -69,9 +88,6 @@ static void set_input_mode(int tty, speed_t speed)
 	tattr.c_iflag = 0;
 	tattr.c_oflag = NL0 | CR0 | TAB0 | BS0 | VT0 | FF0;
 	tattr.c_lflag = 0;
-
-//	tattr.c_cc[VMIN] = 1;
-//	tattr.c_cc[VTIME] = 0;
 
 	tattr.c_cc[VINTR]    = '\0';
 	tattr.c_cc[VQUIT]    = '\0';
@@ -90,25 +106,28 @@ static void set_input_mode(int tty, speed_t speed)
 	tattr.c_cc[VWERASE]  = '\0';
 	tattr.c_cc[VLNEXT]   = '\0';
 	tattr.c_cc[VEOL2]    = '\0';
+#endif
 
-	/* Set TX, RX speed */
-	cfsetispeed(&tattr, speed);
-	cfsetospeed(&tattr, speed);
+	/* Set TX, RX speed to 38400 -- this value allows
+	   to use custom speed in struct struct_serial */
+	cfsetispeed(&tattr, B38400);
+	cfsetospeed(&tattr, B38400);
 
-	status = tcsetattr(tty, TCSANOW, &tattr);
-	if (status == -1)
+	if (tcsetattr(tty, TCSANOW, &tattr) == -1)	
 		perror("tcsetattr()");
 
-	/* Baudrate for sending LIN break */
-	//lin_break_baud = ((lin_baudrate * 2) / 3);
-	lin_break_baud = 12800;
+	/* Set real speed */
+	set_uart_baudrate(tty, lin_baudrate);
+
+	/* Calculate baudrate for sending LIN break */
+	lin_break_baud = ((lin_baudrate * 2) / 3);
 }
 
 
 int send_header(int tty)
 {
 	int buff[3];
-	buff[0] = 0x00; /* Sync byte */
+	buff[0] = 0x00; /* Fake break */
 	buff[1] = 0x55; /* Sync byte */
 	buff[2] = 0xC1; /* LIN ID: 1 */
 
@@ -116,23 +135,8 @@ int send_header(int tty)
 	tcflush(tty, TCIOFLUSH);
 
 	/* Decrease speed to send BREAK
-	 * (simulated with 0x00 data frame) */
-
-	/* Set "non-standard" baudrate in serial_struct struct */
-	sattr.flags &= (~ASYNC_SPD_MASK);
-	sattr.flags |= (ASYNC_SPD_CUST);
-	//sattr.custom_divisor = (115200/12800);
-	sattr.custom_divisor = ((sattr.baud_base)/12800);
-	if (ioctl(tty, TIOCSSERIAL, &sattr) < 0)
-	{
-		perror("ioctl()");
-	}
-	cfsetospeed(&tattr, B38400); /* Should be set to this fixed value */
-	cfsetispeed(&tattr, B38400);
-	if (tcsetattr(tty, TCSANOW, &tattr) == -1) {
-		perror("tcsetattr()");
-	}
-
+	   (simulated with 0x00 data frame) */
+	set_uart_baudrate(tty, lin_break_baud);
 
 	printf("Write break\n");
 	write(tty, &buff[0], 1); /* Write "break" */
@@ -148,23 +152,9 @@ int send_header(int tty)
 	}
 #endif
 
-	sattr.flags &= (~ASYNC_SPD_CUST);
-	sattr.flags |= (ASYNC_SPD_MASK);
-	if (ioctl(tty, TIOCSSERIAL, &sattr) < 0)
-	{
-		perror("ioctl()");
-	}
+	/* Restore "normal" speed */
+	set_uart_baudrate(tty, lin_baudrate);
 
-
-	/* Save "standard" baudrate to termios struct */
-	cfsetospeed(&tattr, lin_baudrate);
-	cfsetispeed(&tattr, lin_baudrate);
-	if (tcsetattr(tty, TCSANOW, &tattr) == -1) {
-		perror("tcsetattr()");
-	}
-
-	//tcsendbreak(tty, 1);	 /* Break */
-	//usleep((useconds_t) 50); /* Break Delimiter */
 	write(tty, &buff[1], 1); /* Sync Byte Field */
 	write(tty, &buff[2], 1); /* PID -- Protected Identifier Field */
 	return 0;
@@ -235,7 +225,7 @@ int main(int argc, char* argv[])
 	printf("Press enter to terminate.\n\n");
 
 	/* Configure UART */
-	set_input_mode(tty, lin_baudrate);
+	set_input_mode(tty);
 
 	while(1) {
 		char c;
