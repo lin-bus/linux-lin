@@ -123,7 +123,6 @@ struct sllin {
 #define SLF_TXEVENT		3               /* Tx wake event             */
 #define SLF_MSGEVENT		4               /* CAN message to sent       */
 
-	unsigned char		leased;
 	dev_t			line;
 	struct task_struct	*kwthread;
 	wait_queue_head_t	kwt_wq;
@@ -640,7 +639,7 @@ static void sll_sync(void)
 			break;
 
 		sl = netdev_priv(dev);
-		if (sl->tty || sl->leased)
+		if (sl->tty)
 			continue;
 		if (dev->flags & IFF_UP)
 			dev_close(dev);
@@ -814,8 +813,6 @@ static void sllin_close(struct tty_struct *tty)
 
 	tty->disc_data = NULL;
 	sl->tty = NULL;
-	if (!sl->leased)
-		sl->line = 0;
 
 	/* Flush network side */
 	unregister_netdev(sl->dev);
