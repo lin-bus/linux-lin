@@ -148,9 +148,15 @@ static int sltty_change_speed(struct tty_struct *tty, unsigned speed)
 	int cflag;
 
 	mutex_lock(&tty->termios_mutex);
+
 	old_termios = *(tty->termios);
 	cflag = tty->termios->c_cflag;
+	cflag &= ~(CBAUD | CIBAUD);
+	cflag |= BOTHER;
+	tty->termios->c_cflag = cflag;
+
 	tty_encode_baud_rate(tty, speed, speed);
+
 	if (tty->ops->set_termios)
 		tty->ops->set_termios(tty, &old_termios);
 	//priv->io.speed = speed;
@@ -249,7 +255,7 @@ static void sll_encaps(struct sllin *sl, struct can_frame *cf)
 		pr_debug("sllin: %s() RTR CAN frame\n", __FUNCTION__);
 		lframe[2] = (u8)cf->can_id; /* Get one byte LIN ID */
 
-		sltty_change_speed(tty, sl->lin_baud / 2);
+		sltty_change_speed(tty, sl->lin_baud * 2 / 3);
 		tty->ops->write(tty, &lframe[0], 1);
 		sltty_change_speed(tty, sl->lin_baud);
 		tty->ops->write(tty, &lframe[1], 1);
@@ -441,6 +447,8 @@ static void sllin_receive_buf(struct tty_struct *tty,
 		if (fp && *fp++) {
 			if (!test_and_set_bit(SLF_ERROR, &sl->flags))
 				sl->dev->stats.rx_errors++;
+			printk(KERN_INFO "sllin_receive_buf char 0x%02x ignored due marker 0x%02x, flags 0x%lx\n",
+				*cp, *(fp-1), sl->flags);
 			cp++;
 			continue;
 		}
