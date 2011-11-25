@@ -479,10 +479,22 @@ int sllin_setup_msg(struct sllin *sl, int mode, int id,
 	sl->tx_lim = SLLIN_BUFF_DATA;
 
 	if ((data != NULL) && len) {
+		int i;
+		unsigned csum  = 0;
+
 		sl->tx_lim += len;
 		memcpy(sl->tx_buff + SLLIN_BUFF_DATA, data, len);
+		/* compute data parity there */
+		for (i = SLLIN_BUFF_DATA; i < sl->tx_lim; i++) {
+			csum += sl->tx_buff[i];
+			if (csum > 255)
+				csum -= 255;
+		}
+
+		sl->tx_buff[sl->tx_lim++] = csum;
 	}
-	sl->rx_lim += len;
+	if (len != 0)
+		sl->rx_lim += len + 1;
 
 	return 0;
 }
