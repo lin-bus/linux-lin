@@ -295,8 +295,8 @@ static void sllin_write_wakeup(struct tty_struct *tty)
 	struct sllin *sl = (struct sllin *) tty->disc_data;
 
 	/* First make sure we're connected. */
-	if (!sl || sl->magic != SLLIN_MAGIC || !netif_running(sl->dev))
-		return;
+	//if (!sl || sl->magic != SLLIN_MAGIC || !netif_running(sl->dev))
+	//	return;
 
 	if (sl->lin_state != SLSTATE_BREAK_SENT)
 		remains = sl->tx_lim - sl->tx_cnt;
@@ -438,8 +438,8 @@ static void sllin_receive_buf(struct tty_struct *tty,
 
 	printk(KERN_INFO "sllin_receive_buf invoked\n");
 
-	if (!sl || sl->magic != SLLIN_MAGIC || !netif_running(sl->dev))
-		return;
+	//if (!sl || sl->magic != SLLIN_MAGIC || !netif_running(sl->dev))
+	//	return;
 
 	/* Read the characters out of the buffer */
 	while (count--) {
