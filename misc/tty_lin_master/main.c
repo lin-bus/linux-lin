@@ -15,153 +15,199 @@
 #include <fcntl.h>
 #include <time.h> /* clock_nanosleep */
 #include <getopt.h>
+#include "lin_common.h"
 
 #define LIN_HDR_SIZE		2
-#define LIN_PKT_MAX_SIZE	16 /* FIXME */
 
-int lin_baudrate = 19200;
-int lin_break_baud = 0;
+struct sllin_tty {
+	int tty_fd;
+	struct termios tattr_orig;
+	struct termios tattr;
+	struct serial_struct sattr;
+};
 
-struct termios tattr_orig;
-struct termios tattr;
-struct serial_struct sattr;
+struct sllin_tty sllin_tty_data;
+
+struct sllin sllin_data = {
+	.tty = &sllin_tty_data,
+};
+
 /* ------------------------------------------------------------------------ */
-static void reset_input_mode(int tty)
+static void tty_reset_mode(struct sllin_tty *tty)
 {
-	tcsetattr(tty, TCSANOW, &tattr_orig);
+	tcsetattr(tty->tty_fd, TCSANOW, &tty->tattr_orig);
 }
 
-static void set_uart_baudrate(int tty, int speed)
+static int tty_set_baudrate(struct sllin_tty *tty, int baudrate)
 {
 	/* Set "non-standard" baudrate in serial_struct struct */
-	sattr.flags &= (~ASYNC_SPD_MASK);
-	sattr.flags |= (ASYNC_SPD_CUST);
-	sattr.custom_divisor = ((sattr.baud_base) / speed);
-	if (ioctl(tty, TIOCSSERIAL, &sattr) < 0)
+	tty->sattr.flags &= (~ASYNC_SPD_MASK);
+	tty->sattr.flags |= (ASYNC_SPD_CUST);
+	tty->sattr.custom_divisor = (tty->sattr.baud_base + baudrate / 2) / baudrate;
+	if (ioctl(tty->tty_fd, TIOCSSERIAL, &tty->sattr) < 0)
 	{
-		perror("ioctl()");
+		perror("ioctl TIOCSSERIAL");
+		return -1;
 	}
 
-//	cfsetispeed(&tattr, B38400);
-//	cfsetospeed(&tattr, B38400);
+//	cfsetispeed(&tty->tattr, B38400);
+//	cfsetospeed(&tty->tattr, B38400);
 //
-//	if (tcsetattr(tty, TCSANOW, &tattr) == -1)	
+//	if (tcsetattr(tty->tty_fd, TCSANOW, &tty->tattr) == -1)	{
 //		perror("tcsetattr()");
+//		return -1;
+//	}
+
+	return 0;
 }
 
-static void set_input_mode(int tty)
+static int tty_set_mode(struct sllin_tty *tty, int baudrate)
 {
-	/* Flush input and output queues. */
-	if (tcflush(tty, TCIOFLUSH) != 0) {
-		perror("tcflush");
-		exit(EXIT_FAILURE);
+	if(!isatty(tty->tty_fd)) {
+		fprintf(stderr, "Not a terminal.\n");
+		return -1;
 	}
 
-	if(!isatty(tty)) {
-		fprintf(stderr, "Not a terminal.\n");
-		exit(EXIT_FAILURE);
+	/* Flush input and output queues. */
+	if (tcflush(tty->tty_fd, TCIOFLUSH) != 0) {
+		perror("tcflush");
+		return -1;;
 	}
 
 	/* Save settings for later restoring */
-	tcgetattr(tty, &tattr_orig);
+	tcgetattr(tty->tty_fd, &tty->tattr_orig);
 
 	/* Save settings into global variables for later use */
-	tcgetattr(tty, &tattr);
-	if (ioctl(tty, TIOCGSERIAL, &sattr) < 0)
-		perror("ioctl()");
+	if (tcgetattr(tty->tty_fd, &tty->tattr) < 0)
+		perror("tcgetattr");
+
+	if (ioctl(tty->tty_fd, TIOCGSERIAL, &tty->sattr) < 0)
+		perror("ioctl TIOCGSERIAL");
 
 	/* Set RAW mode */
 #if 0
-	tattr.c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP
+	tty->tattr.c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP
 				| INLCR | IGNCR | ICRNL | IXON);
-	tattr.c_oflag &= ~OPOST;
-	tattr.c_lflag &= ~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
-	tattr.c_cflag &= ~(CSIZE | PARENB);
-	tattr.c_cflag |= CS8;
+	tty->tattr.c_oflag &= ~OPOST;
+	tty->tattr.c_lflag &= ~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
+	tty->tattr.c_cflag &= ~(CSIZE | PARENB);
+	tty->tattr.c_cflag |= CS8;
 
-	tattr.c_cc[VMIN] = 1;
-	tattr.c_cc[VTIME] = 0;
+	tty->tattr.c_cc[VMIN] = 1;
+	tty->tattr.c_cc[VTIME] = 0;
 #else
 	/* 8 data bits                  */
 	/* Enable receiver              */
 	/* Ignore CD (local connection) */
-	tattr.c_cflag = CS8 | CREAD | CLOCAL;
-	tattr.c_iflag = 0;
-	tattr.c_oflag = NL0 | CR0 | TAB0 | BS0 | VT0 | FF0;
-	tattr.c_lflag = 0;
+	tty->tattr.c_cflag = CS8 | CREAD | CLOCAL;
+	tty->tattr.c_iflag = 0;
+	tty->tattr.c_oflag = NL0 | CR0 | TAB0 | BS0 | VT0 | FF0;
+	tty->tattr.c_lflag = 0;
 
-	tattr.c_cc[VINTR]    = '\0';
-	tattr.c_cc[VQUIT]    = '\0';
-	tattr.c_cc[VERASE]   = '\0';
-	tattr.c_cc[VKILL]    = '\0';
-	tattr.c_cc[VEOF]     = '\0';
-	tattr.c_cc[VTIME]    = '\0';
-	tattr.c_cc[VMIN]     = 1;
-	tattr.c_cc[VSWTC]    = '\0';
-	tattr.c_cc[VSTART]   = '\0';
-	tattr.c_cc[VSTOP]    = '\0';
-	tattr.c_cc[VSUSP]    = '\0';
-	tattr.c_cc[VEOL]     = '\0';
-	tattr.c_cc[VREPRINT] = '\0';
-	tattr.c_cc[VDISCARD] = '\0';
-	tattr.c_cc[VWERASE]  = '\0';
-	tattr.c_cc[VLNEXT]   = '\0';
-	tattr.c_cc[VEOL2]    = '\0';
+	tty->tattr.c_cc[VINTR]    = '\0';
+	tty->tattr.c_cc[VQUIT]    = '\0';
+	tty->tattr.c_cc[VERASE]   = '\0';
+	tty->tattr.c_cc[VKILL]    = '\0';
+	tty->tattr.c_cc[VEOF]     = '\0';
+	tty->tattr.c_cc[VTIME]    = '\0';
+	tty->tattr.c_cc[VMIN]     = 1;
+	tty->tattr.c_cc[VSWTC]    = '\0';
+	tty->tattr.c_cc[VSTART]   = '\0';
+	tty->tattr.c_cc[VSTOP]    = '\0';
+	tty->tattr.c_cc[VSUSP]    = '\0';
+	tty->tattr.c_cc[VEOL]     = '\0';
+	tty->tattr.c_cc[VREPRINT] = '\0';
+	tty->tattr.c_cc[VDISCARD] = '\0';
+	tty->tattr.c_cc[VWERASE]  = '\0';
+	tty->tattr.c_cc[VLNEXT]   = '\0';
+	tty->tattr.c_cc[VEOL2]    = '\0';
 #endif
 
 	/* Set TX, RX speed to 38400 -- this value allows
 	   to use custom speed in struct struct_serial */
-	cfsetispeed(&tattr, B38400);
-	cfsetospeed(&tattr, B38400);
+	cfsetispeed(&tty->tattr, B38400);
+	cfsetospeed(&tty->tattr, B38400);
 
-	if (tcsetattr(tty, TCSANOW, &tattr) == -1)	
+	if (tcsetattr(tty->tty_fd, TCSANOW, &tty->tattr) == -1)	{
 		perror("tcsetattr()");
+		return -1;
+	}
 
 	/* Set real speed */
-	set_uart_baudrate(tty, lin_baudrate);
+	tty_set_baudrate(tty, baudrate);
 
-	/* Calculate baudrate for sending LIN break */
-	lin_break_baud = ((lin_baudrate * 2) / 3);
+	return 0;
 }
 
+/* ------------------------------------------------------------------------ */
 
-int send_header(int tty)
+int sllin_open(struct sllin *sl, const char *dev_fname, int baudrate)
+{
+	int fd;
+
+	sl->lin_baud = baudrate;
+
+	/* Calculate baudrate for sending LIN break */
+	sl->lin_break_baud = (sl->lin_baud * 2) / 3;
+
+	fd = open(dev_fname, O_RDWR);
+	if (fd < 0) {
+		perror("open()");
+		return -1;
+	}
+	sl->tty->tty_fd = fd;
+
+	return tty_set_mode(sl->tty, sl->lin_baud);
+}
+
+int sllin_close(struct sllin *sl)
+{
+	tty_reset_mode(sl->tty);
+    	close(sl->tty->tty_fd);
+	return 0;
+}
+
+int send_header(struct sllin *sl, int lin_id)
 {
 	int buff[3];
+
 	buff[0] = 0x00; /* Fake break */
 	buff[1] = 0x55; /* Sync byte */
-	buff[2] = 0xC1; /* LIN ID: 1 */
+
+	lin_id &= 0x3f;
+	lin_id |= sllin_id_parity_table[lin_id];
+	buff[2] = lin_id; /* LIN ID: 1 */
 
 	printf("send_header() invoked\n");
-	tcflush(tty, TCIOFLUSH);
+	tcflush(sl->tty->tty_fd, TCIOFLUSH);
 
 	/* Decrease speed to send BREAK
 	   (simulated with 0x00 data frame) */
-	set_uart_baudrate(tty, lin_break_baud);
+	tty_set_baudrate(sl->tty, sl->lin_break_baud);
 
 	printf("Write break\n");
-	write(tty, &buff[0], 1); /* Write "break" */
+	write(sl->tty->tty_fd, &buff[0], 1); /* Write "break" */
 #if 0
-	read(tty, &buff[0], 1);
+	read(sl->tty->tty_fd, &buff[0], 1);
 	printf("Break read\n");
 #else
 	{
 		struct timespec sleep_time;
 		sleep_time.tv_sec = 0;
-		sleep_time.tv_nsec = ((1000000000ll * 11) / lin_break_baud);
+		sleep_time.tv_nsec = ((1000000000ll * 11) / sl->lin_break_baud);
 		clock_nanosleep(CLOCK_MONOTONIC, 0, &sleep_time, NULL);
 	}
 #endif
 
 	/* Restore "normal" speed */
-	set_uart_baudrate(tty, lin_baudrate);
+	tty_set_baudrate(sl->tty, sl->lin_baud);
 
-	write(tty, &buff[1], 1); /* Sync Byte Field */
-	write(tty, &buff[2], 1); /* PID -- Protected Identifier Field */
+	write(sl->tty->tty_fd, &buff[1], 1); /* Sync Byte Field */
+	write(sl->tty->tty_fd, &buff[2], 1); /* PID -- Protected Identifier Field */
 	return 0;
 }
 
-int read_header(int tty)
+int read_header(struct sllin *sl)
 {
 	int p0, p1; /* Parity bits */
 	int par_rec; /* Parity received as a part of a packet */
@@ -171,14 +217,14 @@ int read_header(int tty)
 	memset(buff, '\0', sizeof(buff));
 
 	while (1) {
-		received = read(tty, &buff[0], 1);
+		received = read(sl->tty->tty_fd, &buff[0], 1);
 		if (received == -1)
 			perror("read()");
 		
 		if (buff[0] != 0x55) /* Sync byte field */
 			continue;
 
-		received = read(tty, &buff[1], 1);
+		received = read(sl->tty->tty_fd, &buff[1], 1);
 		if (received == -1)
 			perror("read()");
 		else
@@ -203,6 +249,31 @@ int read_header(int tty)
 	return 0;
 }
 
+int parse_arr(unsigned char *buff, const char *str, int len_max)
+{
+	char *p;
+	int len = 0;
+
+	do {
+		if (len >= len_max)
+			return -1;
+		
+		*buff = strtol(str, &p, 0);
+		if(str == p)
+			return -1;
+
+		str = p;
+
+		len++;
+		buff++;
+	} while (*(str++) == ',');
+
+	if (*(--str) != '\0')
+		return -1;
+
+	return len;
+}
+
 static void usage(void)
 {
 	printf("Usage: lin_master <parameters>\n\n");
@@ -218,6 +289,8 @@ static void usage(void)
 
 int main(int argc, char* argv[])
 {
+	struct sllin *sl = &sllin_data;
+
 	static struct option long_opts[] = {
 		{"device"  , 1, 0, 'd'},
 		{"baud"    , 1, 0, 'B'},
@@ -227,23 +300,41 @@ int main(int argc, char* argv[])
 		{0, 0, 0, 0}
 	};
 	int opt;
-	char dev[32] = {'\0'};
-	int tty;
+	char *dev_fname = "";
+	int lin_baudrate = 19200;
+	int lin_id = 1;
+	int resp_len = 0;
+	unsigned char resp_data[SLLIN_DATA_MAX + 1];
+	char *p;
 
 	while ((opt = getopt_long(argc, argv, "d:B:i:r:h", &long_opts[0], NULL)) != EOF) {
 		switch (opt) {
 			case 'd':
-				strncpy((char*)&dev, optarg, 32);
+				dev_fname = optarg;
 				break;
 
 			case 'B':
-				lin_baudrate = atoi(optarg);
+				lin_baudrate = strtol(optarg, &p, 10);
+				if ((p == optarg) || ((*p != '\0') && (*p != ' '))) {
+					fprintf(stderr, "Baudrate format error\n");
+					exit(EXIT_FAILURE);
+				}
 				break;
 
 			case 'i':
+				lin_id = strtol(optarg, &p, 0);
+				if ((p == optarg) || ((*p != '\0') && (*p != ' '))) {
+					fprintf(stderr, "LIN ID format error\n");
+					exit(EXIT_FAILURE);
+				}
 				break;
 
 			case 'r':
+				resp_len = parse_arr(resp_data, optarg, SLLIN_DATA_MAX);
+				if (resp_len < 0) {
+					fprintf(stderr, "Response data format error\n");
+					exit(EXIT_FAILURE);
+				}
 				break;
 
 			case 'h':
@@ -261,36 +352,32 @@ int main(int argc, char* argv[])
 	}
 
 	/* Device name was not set by user */
-	if (strlen(dev) == 0) {
+	if (strlen(dev_fname) == 0) {
 		usage();
 		exit(EXIT_FAILURE);
 	}
 
 	/* ----------------------------------- */
-	tty = open(dev, O_RDWR);
-	if (tty < 0) {
-		perror("open()");
-		return -4;
+	if (sllin_open(sl, dev_fname, lin_baudrate) < 0) {
+		fprintf (stderr, "sllin_open open failed\n");
+		exit(EXIT_FAILURE);
 	}
 
 	fcntl(fileno(stdin), F_SETFL, O_NONBLOCK);
 	printf("Press enter to terminate.\n\n");
 
-	/* Configure UART */
-	set_input_mode(tty);
 
 	while(1) {
 		char c;
 
-		send_header(tty);
+		send_header(sl, lin_id);
 		sleep(1);
 
 		if (read(fileno(stdin), &c, 1) > 0)
 			break;
 	}
 
-	reset_input_mode(tty);
-    	close(tty);
+	sllin_close(sl);
 
 	return EXIT_SUCCESS;
 }
