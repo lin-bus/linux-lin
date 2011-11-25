@@ -2,28 +2,44 @@
  * UART-LIN master implementation
  */
 
+
+#define USE_TERMIOS2
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <string.h>
-#include <termios.h>
 #include <stdint.h>
 #include <sys/ioctl.h>
-#include <linux/serial.h> /* struct struct_serial */
 #include <unistd.h>
 #include <fcntl.h>
 #include <time.h> /* clock_nanosleep */
 #include <getopt.h>
+
+#ifndef USE_TERMIOS2
+  #include <linux/serial.h> /* struct struct_serial */
+  #include <termios.h>
+#else /*USE_TERMIOS2*/
+  #include <asm/ioctls.h>
+  #include <asm/termbits.h>
+#endif /*USE_TERMIOS2*/
+
 #include "lin_common.h"
 
 #define LIN_HDR_SIZE		2
 
 struct sllin_tty {
 	int tty_fd;
+
+#ifndef USE_TERMIOS2
 	struct termios tattr_orig;
 	struct termios tattr;
 	struct serial_struct sattr;
+#else /*USE_TERMIOS2*/
+	struct termios2 tattr_orig;
+	struct termios2 tattr;
+#endif /*USE_TERMIOS2*/
 };
 
 struct sllin_tty sllin_tty_data;
@@ -33,6 +49,9 @@ struct sllin sllin_data = {
 };
 
 /* ------------------------------------------------------------------------ */
+
+#ifndef USE_TERMIOS2
+
 static void tty_reset_mode(struct sllin_tty *tty)
 {
 	tcsetattr(tty->tty_fd, TCSANOW, &tty->tattr_orig);
@@ -61,6 +80,41 @@ static int tty_set_baudrate(struct sllin_tty *tty, int baudrate)
 	return 0;
 }
 
+static int tty_flush(struct sllin_tty *tty, int queue_selector)
+{
+	return tcflush(tty->tty_fd, queue_selector);
+}
+
+#else /*USE_TERMIOS2*/
+
+static void tty_reset_mode(struct sllin_tty *tty)
+{
+	ioctl(tty->tty_fd, TCSETS2, &tty->tattr_orig);
+}
+
+static int tty_set_baudrate(struct sllin_tty *tty, int baudrate)
+{
+	tty->tattr.c_ospeed = baudrate;
+	tty->tattr.c_ispeed = baudrate;
+	tty->tattr.c_cflag &= ~CBAUD;
+	tty->tattr.c_cflag |= BOTHER;
+
+	if(ioctl(tty->tty_fd, TCSETS2, &tty->tattr)) {
+		perror("ioctl TIOCSSERIAL");
+		return -1;
+	}
+
+	return 0;
+}
+
+static int tty_flush(struct sllin_tty *tty, int queue_selector)
+{
+	return ioctl(tty->tty_fd, TCFLSH, queue_selector);
+}
+
+#endif /*USE_TERMIOS2*/
+
+
 static int tty_set_mode(struct sllin_tty *tty, int baudrate)
 {
 	if(!isatty(tty->tty_fd)) {
@@ -69,20 +123,46 @@ static int tty_set_mode(struct sllin_tty *tty, int baudrate)
 	}
 
 	/* Flush input and output queues. */
-	if (tcflush(tty->tty_fd, TCIOFLUSH) != 0) {
+	if (tty_flush(tty, TCIOFLUSH) != 0) {
 		perror("tcflush");
 		return -1;;
 	}
 
+#ifndef USE_TERMIOS2
+
 	/* Save settings for later restoring */
-	tcgetattr(tty->tty_fd, &tty->tattr_orig);
+	if (tcgetattr(tty->tty_fd, &tty->tattr_orig) < 0) {
+		perror("tcgetattr");
+		return -1;
+	}
 
 	/* Save settings into global variables for later use */
-	if (tcgetattr(tty->tty_fd, &tty->tattr) < 0)
+	if (tcgetattr(tty->tty_fd, &tty->tattr) < 0) {
 		perror("tcgetattr");
+		return -1;
+	}
 
-	if (ioctl(tty->tty_fd, TIOCGSERIAL, &tty->sattr) < 0)
+	/* Save settings into global variables for later use */
+	if (ioctl(tty->tty_fd, TIOCGSERIAL, &tty->sattr) < 0) {
 		perror("ioctl TIOCGSERIAL");
+	}
+
+#else /*USE_TERMIOS2*/
+
+	/* Save settings for later restoring */
+	if (ioctl(tty->tty_fd, TCGETS2, &tty->tattr_orig) < 0) {
+		perror("ioctl TCGETS2");
+		return -1;
+	}
+
+	/* Save settings into global variables for later use */
+	if (ioctl(tty->tty_fd, TCGETS2, &tty->tattr) < 0) {
+		perror("ioctl TCGETS2");
+		return -1;
+	}
+
+#endif /*USE_TERMIOS2*/
+
 
 	/* Set RAW mode */
 #if 0
@@ -123,6 +203,7 @@ static int tty_set_mode(struct sllin_tty *tty, int baudrate)
 	tty->tattr.c_cc[VEOL2]    = '\0';
 #endif
 
+#ifndef USE_TERMIOS2
 	/* Set TX, RX speed to 38400 -- this value allows
 	   to use custom speed in struct struct_serial */
 	cfsetispeed(&tty->tattr, B38400);
@@ -132,6 +213,17 @@ static int tty_set_mode(struct sllin_tty *tty, int baudrate)
 		perror("tcsetattr()");
 		return -1;
 	}
+
+#else /*USE_TERMIOS2*/
+
+	/* Set new parameters with previous speed and left */
+	/* tty_set_baudrate() to do the rest  */
+	if(ioctl(tty->tty_fd, TCSETS2, &tty->tattr)) {
+		perror("ioctl TIOCSSERIAL");
+		return -1;
+	}
+
+#endif /*USE_TERMIOS2*/
 
 	/* Set real speed */
 	tty_set_baudrate(tty, baudrate);
@@ -179,7 +271,7 @@ int send_header(struct sllin *sl, int lin_id)
 	buff[2] = lin_id; /* LIN ID: 1 */
 
 	printf("send_header() invoked\n");
-	tcflush(sl->tty->tty_fd, TCIOFLUSH);
+	tty_flush(sl->tty, TCIOFLUSH);
 
 	/* Decrease speed to send BREAK
 	   (simulated with 0x00 data frame) */
