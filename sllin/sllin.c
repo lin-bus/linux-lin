@@ -548,23 +548,41 @@ int sllin_send_break(struct sllin *sl)
 {
 	struct tty_struct *tty = sl->tty;
 	unsigned long break_baud = sl->lin_baud;
-	int res;
+	spinlock_t mr_lock = SPIN_LOCK_UNLOCKED;
+	unsigned long flags;	
+	int retval;
 
-	//break_baud = (break_baud * 8) / 14;
-	break_baud /= 2;
-
+#if 0
+	break_baud = ((break_baud * 2) / 3);
 	sltty_change_speed(tty, break_baud);
 
 	sl->rx_expect = SLLIN_BUFF_BREAK + 1;
-
 	sl->lin_state = SLSTATE_BREAK_SENT;
 
-	res = sllin_send_tx_buff(sl);
-	if (res < 0) {
+	retval = sllin_send_tx_buff(sl);
+	if (retval < 0) {
 		sl->lin_state = SLSTATE_IDLE;
 		return res;
 	}
+#else
+	/* Do the break ourselves; Inspired by 
+	   http://lxr.linux.no/#linux+v3.1.2/drivers/tty/tty_io.c#L2452 */
 
+	spin_lock_irqsave(&mr_lock, flags);
+	retval = tty->ops->break_ctl(tty, -1);
+	if (retval)
+		goto out;
+
+	udelay(712);
+	//usleep_range(650, 750);
+
+	retval = tty->ops->break_ctl(tty, 0);
+out:
+	spin_unlock_irqrestore(&mr_lock, flags);
+
+	sl->lin_state = SLSTATE_BREAK_SENT;
+#endif
+	//return retval;
 	return 0;
 }
 
@@ -614,7 +632,7 @@ int sllin_kwthread(void *ptr)
 				if (sl->rx_cnt <= SLLIN_BUFF_BREAK)
 					continue;
 
-				res = sltty_change_speed(tty, sl->lin_baud);
+				//res = sltty_change_speed(tty, sl->lin_baud);
 
 				sllin_send_tx_buff(sl);
 
@@ -772,7 +790,7 @@ static int sllin_open(struct tty_struct *tty)
 		sl->tx_cnt    = 0;
 		sl->tx_lim    = 0;
 
-		sl->lin_baud  = 2400;
+		sl->lin_baud  = 19200;
 
 		sl->lin_master = 1;
 		sl->lin_state = SLSTATE_IDLE;
