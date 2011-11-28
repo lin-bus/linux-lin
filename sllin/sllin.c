@@ -71,6 +71,7 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Oliver Hartkopp <socketcan@hartkopp.net>");
 
 #define SLLIN_MAGIC 0x53CA
+// #define BREAK_BY_BAUD
 
 static int maxdev = 10;		/* MAX number of SLLIN channels;
 				   This can be overridden with
@@ -158,7 +159,7 @@ static int sltty_change_speed(struct tty_struct *tty, unsigned speed)
 
 	if (tty->ops->set_termios)
 		tty->ops->set_termios(tty, &old_termios);
-	//priv->io.speed = speed;
+
 	mutex_unlock(&tty->termios_mutex);
 
 	return 0;
@@ -446,18 +447,26 @@ static void sllin_receive_buf(struct tty_struct *tty,
 		if (fp && *fp++) {
 			if (!test_and_set_bit(SLF_ERROR, &sl->flags))
 				sl->dev->stats.rx_errors++;
-			printk(KERN_INFO "sllin_receive_buf char 0x%02x ignored due marker 0x%02x, flags 0x%lx\n",
+			printk(KERN_INFO "sllin_receive_buf char 0x%02x ignored "
+				"due marker 0x%02x, flags 0x%lx\n",
 				*cp, *(fp-1), sl->flags);
 			cp++;
 			continue;
 		}
 
-		if (sl->rx_cnt < SLLIN_BUFF_LEN)  {
+		if (sl->rx_cnt < SLLIN_BUFF_LEN) {
+#ifndef BREAK_BY_BAUD
+			/* We didn't receive Break character */
+			if ((sl->rx_cnt == SLLIN_BUFF_BREAK) && (*cp == 0x55)) {
+				sl->rx_buff[sl->rx_cnt++] = 0x00;
+			}
+#endif
+			printk(KERN_INFO "LIN_RX[%d]: 0x%02x\n", sl->rx_cnt, *cp);
 			sl->rx_buff[sl->rx_cnt++] = *cp++;
 		}
 	}
 
-	if(sl->rx_cnt >= sl->rx_expect) {
+	if (sl->rx_cnt >= sl->rx_expect) {
 		set_bit(SLF_RXEVENT, &sl->flags);
 		wake_up(&sl->kwt_wq);
 		printk(KERN_INFO "sllin_receive_buf count %d, wakeup\n", sl->rx_cnt);
@@ -513,11 +522,14 @@ int sllin_send_tx_buff(struct sllin *sl)
 	int remains;
 	int res;
 
+#ifdef BREAK_BY_BAUD
 	if (sl->lin_state != SLSTATE_BREAK_SENT)
 		remains = sl->tx_lim - sl->tx_cnt;
 	else
 		remains = 1;
-
+#else
+	remains = sl->tx_lim - sl->tx_cnt;
+#endif
 
 	res = tty->ops->write(tty, sl->tx_buff + sl->tx_cnt, remains);
 	if (res < 0)
@@ -544,47 +556,64 @@ int sllin_send_tx_buff(struct sllin *sl)
 	return 0;
 }
 
+#ifdef BREAK_BY_BAUD
 int sllin_send_break(struct sllin *sl)
 {
 	struct tty_struct *tty = sl->tty;
-	unsigned long break_baud = sl->lin_baud;
-	spinlock_t mr_lock = SPIN_LOCK_UNLOCKED;
-	unsigned long flags;	
-	int retval;
+	unsigned long break_baud;
+	int res;
 
-#if 0
-	break_baud = ((break_baud * 2) / 3);
+	break_baud = ((sl->lin_baud * 2) / 3);
 	sltty_change_speed(tty, break_baud);
+
+	tty->ops->flush_buffer(tty);
+	sl->rx_cnt = SLLIN_BUFF_BREAK;
 
 	sl->rx_expect = SLLIN_BUFF_BREAK + 1;
 	sl->lin_state = SLSTATE_BREAK_SENT;
 
-	retval = sllin_send_tx_buff(sl);
-	if (retval < 0) {
+	res = sllin_send_tx_buff(sl);
+	if (res < 0) {
 		sl->lin_state = SLSTATE_IDLE;
 		return res;
 	}
-#else
-	/* Do the break ourselves; Inspired by 
-	   http://lxr.linux.no/#linux+v3.1.2/drivers/tty/tty_io.c#L2452 */
 
-	spin_lock_irqsave(&mr_lock, flags);
-	retval = tty->ops->break_ctl(tty, -1);
-	if (retval)
-		goto out;
-
-	udelay(712);
-	//usleep_range(650, 750);
-
-	retval = tty->ops->break_ctl(tty, 0);
-out:
-	spin_unlock_irqrestore(&mr_lock, flags);
-
-	sl->lin_state = SLSTATE_BREAK_SENT;
-#endif
-	//return retval;
 	return 0;
 }
+#else /* BREAK_BY_BAUD */
+
+int sllin_send_break(struct sllin *sl)
+{
+	struct tty_struct *tty = sl->tty;
+	unsigned long break_baud;
+	unsigned long flags;	
+	int retval;
+
+	sl->rx_cnt = SLLIN_BUFF_BREAK;
+	sl->rx_expect = SLLIN_BUFF_BREAK + 1;
+	sl->lin_state = SLSTATE_BREAK_SENT;
+
+	/* Do the break ourselves; Inspired by 
+	   http://lxr.linux.no/#linux+v3.1.2/drivers/tty/tty_io.c#L2452 */
+	retval = tty->ops->break_ctl(tty, -1);
+	if (retval)
+		return retval;
+
+	//udelay(712);
+	usleep_range(650, 750);
+
+	retval = tty->ops->break_ctl(tty, 0);
+	usleep_range(50, 100);
+	
+	tty->ops->flush_buffer(tty);
+
+	sl->tx_cnt = SLLIN_BUFF_SYNC;
+	set_bit(SLF_RXEVENT, &sl->flags);
+	wake_up(&sl->kwt_wq);
+
+	return 0;
+}
+#endif /* BREAK_BY_BAUD */
 
 /*****************************************
  *  sllin_kwthread - kernel worker thread
@@ -594,25 +623,26 @@ int sllin_kwthread(void *ptr)
 {
 	struct sllin *sl = (struct sllin *)ptr;
 	struct tty_struct *tty = sl->tty;
+	struct sched_param schparam = { .sched_priority = 40 };
 	int res;
+	unsigned char buff[8] = {0x2, 0x3, 0x4, 0x5};
 
 	printk(KERN_INFO "sllin: sllin_kwthread started.\n");
+	sched_setscheduler(current, SCHED_FIFO, &schparam);
 
 	clear_bit(SLF_ERROR, &sl->flags);
-
 	sltty_change_speed(tty, sl->lin_baud);
 
-	sllin_setup_msg(sl, 0, 0x33, NULL, 0);
-	sl->id_to_send = 1;
+	//sllin_setup_msg(sl, 0, 0x01, NULL, 0);
+	sllin_setup_msg(sl, 0, 0x02, buff, 4);
+	sl->id_to_send = true;
 
 	while (!kthread_should_stop()) {
-
 		if ((sl->lin_state == SLSTATE_IDLE) && sl->lin_master &&
 			sl->id_to_send) {
-			if(sllin_send_break(sl)<0) {
+			if(sllin_send_break(sl) < 0) {
 				/* error processing */
 			}
-
 		}
 
 		wait_event_killable(sl->kwt_wq, kthread_should_stop() ||
@@ -631,16 +661,16 @@ int sllin_kwthread(void *ptr)
 			case SLSTATE_BREAK_SENT:
 				if (sl->rx_cnt <= SLLIN_BUFF_BREAK)
 					continue;
-
-				//res = sltty_change_speed(tty, sl->lin_baud);
-
-				sllin_send_tx_buff(sl);
+#ifdef BREAK_BY_BAUD
+				res = sltty_change_speed(tty, sl->lin_baud);
+#endif
 
 				sl->lin_state = SLSTATE_ID_SENT;
-
+				sllin_send_tx_buff(sl);
 				break;
+
 			case SLSTATE_ID_SENT:
-				sl->id_to_send = 0;
+				sl->id_to_send = false;
 				sl->lin_state = SLSTATE_IDLE;
 				break;
 		}
@@ -787,6 +817,7 @@ static int sllin_open(struct tty_struct *tty)
 		/* Perform the low-level SLLIN initialization. */
 		sl->rx_cnt    = 0;
 		sl->rx_expect = 0;
+		sl->rx_lim    = 0;
 		sl->tx_cnt    = 0;
 		sl->tx_lim    = 0;
 
