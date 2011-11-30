@@ -127,6 +127,8 @@ struct sllin {
 	dev_t			line;
 	struct task_struct	*kwthread;
 	wait_queue_head_t	kwt_wq;
+
+	struct sk_buff          *rec_skb;	/* Socket buffer with received CAN frame */
 };
 
 static struct net_device **sllin_devs;
@@ -296,8 +298,8 @@ static void sllin_write_wakeup(struct tty_struct *tty)
 	struct sllin *sl = (struct sllin *) tty->disc_data;
 
 	/* First make sure we're connected. */
-	//if (!sl || sl->magic != SLLIN_MAGIC || !netif_running(sl->dev))
-	//	return;
+	if (!sl || sl->magic != SLLIN_MAGIC || !netif_running(sl->dev))
+		return;
 
 	if (sl->lin_state != SLSTATE_BREAK_SENT)
 		remains = sl->tx_lim - sl->tx_cnt;
@@ -328,24 +330,28 @@ static netdev_tx_t sll_xmit(struct sk_buff *skb, struct net_device *dev)
 	struct sllin *sl = netdev_priv(dev);
 
 	if (skb->len != sizeof(struct can_frame))
-		goto out;
+		goto err_out;
 
 	spin_lock(&sl->lock);
 	if (!netif_running(dev))  {
 		spin_unlock(&sl->lock);
 		printk(KERN_WARNING "%s: xmit: iface is down\n", dev->name);
-		goto out;
+		goto err_out;
 	}
 	if (sl->tty == NULL) {
 		spin_unlock(&sl->lock);
-		goto out;
+		goto err_out;
 	}
 
 	netif_stop_queue(sl->dev);
-	sll_encaps(sl, (struct can_frame *) skb->data); /* encaps & send */
-	spin_unlock(&sl->lock);
 
-out:
+	sl->rec_skb = skb;
+	set_bit(SLF_MSGEVENT, &sl->flags);
+	wake_up(&sl->kwt_wq);
+	spin_unlock(&sl->lock);
+	return NETDEV_TX_OK;
+
+err_out:
 	kfree_skb(skb);
 	return NETDEV_TX_OK;
 }
@@ -439,8 +445,8 @@ static void sllin_receive_buf(struct tty_struct *tty,
 
 	printk(KERN_INFO "sllin_receive_buf invoked\n");
 
-	//if (!sl || sl->magic != SLLIN_MAGIC || !netif_running(sl->dev))
-	//	return;
+	if (!sl || sl->magic != SLLIN_MAGIC || !netif_running(sl->dev))
+		return;
 
 	/* Read the characters out of the buffer */
 	while (count--) {
@@ -608,6 +614,8 @@ int sllin_send_break(struct sllin *sl)
 	tty->ops->flush_buffer(tty);
 
 	sl->tx_cnt = SLLIN_BUFF_SYNC;
+
+	printk(KERN_INFO "sllin: Break sent.\n");
 	set_bit(SLF_RXEVENT, &sl->flags);
 	wake_up(&sl->kwt_wq);
 
@@ -625,17 +633,13 @@ int sllin_kwthread(void *ptr)
 	struct tty_struct *tty = sl->tty;
 	struct sched_param schparam = { .sched_priority = 40 };
 	int res;
-	unsigned char buff[8] = {0x2, 0x3, 0x4, 0x5};
+	struct can_frame *cf;
 
 	printk(KERN_INFO "sllin: sllin_kwthread started.\n");
 	sched_setscheduler(current, SCHED_FIFO, &schparam);
 
 	clear_bit(SLF_ERROR, &sl->flags);
 	sltty_change_speed(tty, sl->lin_baud);
-
-	//sllin_setup_msg(sl, 0, 0x01, NULL, 0);
-	sllin_setup_msg(sl, 0, 0x02, buff, 4);
-	sl->id_to_send = true;
 
 	while (!kthread_should_stop()) {
 		if ((sl->lin_state == SLSTATE_IDLE) && sl->lin_master &&
@@ -647,7 +651,8 @@ int sllin_kwthread(void *ptr)
 
 		wait_event_killable(sl->kwt_wq, kthread_should_stop() ||
 			test_bit(SLF_RXEVENT, &sl->flags) ||
-			test_bit(SLF_TXEVENT, &sl->flags));
+			test_bit(SLF_TXEVENT, &sl->flags) ||
+			((sl->lin_state == SLSTATE_IDLE) && test_bit(SLF_MSGEVENT, &sl->flags)));
 
 		if (test_and_clear_bit(SLF_RXEVENT, &sl->flags)) {
 			printk(KERN_INFO "sllin_kthread RXEVENT \n");
@@ -657,11 +662,42 @@ int sllin_kwthread(void *ptr)
 			printk(KERN_INFO "sllin_kthread TXEVENT \n");
 		}
 
+		if ((sl->lin_state == SLSTATE_IDLE) && test_bit(SLF_MSGEVENT, &sl->flags)) {
+			cf = (struct can_frame *)sl->rec_skb->data;
+
+			/* We do care only about SFF frames */
+			if (cf->can_id & CAN_EFF_FLAG)
+				goto release_skb;
+
+			if (cf->can_id & CAN_RTR_FLAG) {
+				printk(KERN_INFO "%s: RTR CAN frame, ID = %x\n",
+					__FUNCTION__, cf->can_id & CAN_SFF_MASK);
+				if (sllin_setup_msg(sl, 0, 
+					cf->can_id & CAN_SFF_MASK, NULL, 0) != -1) {
+					sl->id_to_send = true;
+				}
+			} else {
+				printk(KERN_INFO "%s: NON-RTR CAN frame, ID = %x\n",
+					__FUNCTION__, (int)cf->can_id & CAN_SFF_MASK);
+
+				if (sllin_setup_msg(sl, 0, cf->can_id & CAN_SFF_MASK, 
+					cf->data, cf->can_dlc) != -1) {
+					sl->id_to_send = true;
+				}
+			}
+
+		release_skb:
+			clear_bit(SLF_MSGEVENT, &sl->flags);
+			kfree_skb(sl->rec_skb);
+			netif_wake_queue(sl->dev);
+		}
+
 		switch (sl->lin_state) {
 			case SLSTATE_BREAK_SENT:
+#ifdef BREAK_BY_BAUD
 				if (sl->rx_cnt <= SLLIN_BUFF_BREAK)
 					continue;
-#ifdef BREAK_BY_BAUD
+
 				res = sltty_change_speed(tty, sl->lin_baud);
 #endif
 
