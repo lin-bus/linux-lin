@@ -280,8 +280,9 @@ int send_header(struct sllin *sl, int lin_id)
 	printf("Write break\n");
 	write(sl->tty->tty_fd, &buff[0], 1); /* Write "break" */
 #if 0
+	printf("Reading...\n");
 	read(sl->tty->tty_fd, &buff[0], 1);
-	printf("Break read\n");
+	printf("Break read: 0x%02X\n", buff[0]);
 #else
 	{
 		struct timespec sleep_time;
