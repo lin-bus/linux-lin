@@ -108,14 +108,15 @@ struct sllin {
 	unsigned char		rx_buff[SLLIN_BUFF_LEN]; /* LIN Rx buffer */
 	unsigned char		tx_buff[SLLIN_BUFF_LEN]; /* LIN Tx buffer */
 	int			rx_expect;      /* expected number of Rx chars */
-	int			rx_lim;         /* maximum Rx chars for ID  */
+	int			rx_lim;         /* maximum Rx chars for current frame */
 	int			rx_cnt;         /* message buffer Rx fill level  */
 	int			tx_lim;         /* actual limit of bytes to Tx */
 	int			tx_cnt;         /* number of already Tx bytes */
 	char			lin_master;	/* node is a master node */
 	int			lin_baud;	/* LIN baudrate */
 	int 			lin_state;	/* state */
-	int 			id_to_send;	/* there is ID to be sent */
+	char  			id_to_send;	/* there is ID to be sent */
+	char                    data_to_send;   /* there are data to be sent */
 
 	unsigned long		flags;		/* Flag values/ mode etc     */
 #define SLF_INUSE		0		/* Channel in use            */
@@ -494,6 +495,7 @@ int sllin_setup_msg(struct sllin *sl, int mode, int id,
 	sl->rx_cnt = 0;
 	sl->tx_cnt = 0;
 	sl->rx_expect = 0;
+	sl->rx_lim = SLLIN_BUFF_LEN;
 
 	sl->tx_buff[SLLIN_BUFF_BREAK] = 0;
 	sl->tx_buff[SLLIN_BUFF_SYNC]  = 0x55;
@@ -516,7 +518,7 @@ int sllin_setup_msg(struct sllin *sl, int mode, int id,
 		sl->tx_buff[sl->tx_lim++] = csum;
 	}
 	if (len != 0)
-		sl->rx_lim += len + 1;
+		sl->rx_lim = SLLIN_BUFF_DATA + len + 1;
 
 	return 0;
 }
@@ -675,6 +677,7 @@ int sllin_kwthread(void *ptr)
 				if (sllin_setup_msg(sl, 0, 
 					cf->can_id & CAN_SFF_MASK, NULL, 0) != -1) {
 					sl->id_to_send = true;
+					sl->data_to_send = false;
 				}
 			} else {
 				printk(KERN_INFO "%s: NON-RTR CAN frame, ID = %x\n",
@@ -683,6 +686,7 @@ int sllin_kwthread(void *ptr)
 				if (sllin_setup_msg(sl, 0, cf->can_id & CAN_SFF_MASK, 
 					cf->data, cf->can_dlc) != -1) {
 					sl->id_to_send = true;
+					sl->data_to_send = true;
 				}
 			}
 
@@ -706,6 +710,40 @@ int sllin_kwthread(void *ptr)
 				break;
 
 			case SLSTATE_ID_SENT:
+				sl->id_to_send = false;
+				if (sl->data_to_send) {
+					sllin_send_tx_buff(sl);
+					sl->lin_state = SLSTATE_RESPONSE_SENT;
+					sl->rx_expect = sl->tx_lim;
+					goto slstate_response_sent;
+				} else {
+					sl->rx_expect = SLLIN_BUFF_DATA + 2;
+					sl->lin_state = SLSTATE_RESPONSE_WAIT;
+					goto slstate_response_wait;
+				}
+				break;
+
+			case SLSTATE_RESPONSE_WAIT:
+			slstate_response_wait:
+				if (sl->rx_cnt < sl->rx_expect)
+					continue;
+			
+				printk(KERN_INFO "sllin: response received ID %d len %d\n",
+					sl->rx_buff[SLLIN_BUFF_ID], sl->rx_cnt - SLLIN_BUFF_DATA - 1);
+				// check checksum in sl->rx_buff
+				// send CAN non-RTR frame with data
+				sl->id_to_send = false;
+				sl->lin_state = SLSTATE_IDLE;
+				break;
+
+			case SLSTATE_RESPONSE_SENT:
+			slstate_response_sent:
+				if (sl->rx_cnt < sl->tx_lim)
+					continue;
+				
+				printk(KERN_INFO "sllin: response sent ID %d len %d\n",
+					sl->rx_buff[SLLIN_BUFF_ID], sl->rx_cnt - SLLIN_BUFF_DATA - 1);
+
 				sl->id_to_send = false;
 				sl->lin_state = SLSTATE_IDLE;
 				break;
@@ -851,15 +889,18 @@ static int sllin_open(struct tty_struct *tty)
 
 	if (!test_bit(SLF_INUSE, &sl->flags)) {
 		/* Perform the low-level SLLIN initialization. */
-		sl->rx_cnt    = 0;
+		sl->lin_master = true;
+
+		sl->rx_cnt = 0;
 		sl->rx_expect = 0;
-		sl->rx_lim    = 0;
-		sl->tx_cnt    = 0;
-		sl->tx_lim    = 0;
+		sl->rx_lim = sl->lin_master ? 0 : SLLIN_BUFF_LEN;
+		sl->tx_cnt = 0;
+		sl->tx_lim = 0;
+		sl->id_to_send = false;
+		sl->data_to_send = false;
 
 		sl->lin_baud  = 19200;
 
-		sl->lin_master = 1;
 		sl->lin_state = SLSTATE_IDLE;
 
 		set_bit(SLF_INUSE, &sl->flags);
