@@ -58,6 +58,7 @@
 #include <linux/init.h>
 #include <linux/can.h>
 #include <linux/kthread.h>
+#include <linux/hrtimer.h>
 
 /* Should be in include/linux/tty.h */
 #define N_SLLIN         25
@@ -124,11 +125,13 @@ struct sllin {
 #define SLF_RXEVENT		2               /* Rx wake event             */
 #define SLF_TXEVENT		3               /* Tx wake event             */
 #define SLF_MSGEVENT		4               /* CAN message to sent       */
+#define SLF_TMOUTEVENT          5               /* Timeout on received data  */
 
 	dev_t			line;
 	struct task_struct	*kwthread;
 	wait_queue_head_t	kwt_wq;
-
+	struct hrtimer          rx_timer;       /* RX timeout timer */
+	ktime_t	                rx_timer_timeout; /* RX timeout timer value */
 	struct sk_buff          *rec_skb;	/* Socket buffer with received CAN frame */
 };
 
@@ -625,6 +628,18 @@ int sllin_send_break(struct sllin *sl)
 }
 #endif /* BREAK_BY_BAUD */
 
+
+static enum hrtimer_restart sllin_rx_timeout_handler(struct hrtimer *hrtimer)
+{
+	struct sllin *sl = container_of(hrtimer, struct sllin, rx_timer);
+
+	set_bit(SLF_TMOUTEVENT, &sl->flags);
+	wake_up(&sl->kwt_wq);
+
+	return HRTIMER_NORESTART;
+}
+
+
 /*****************************************
  *  sllin_kwthread - kernel worker thread
  *****************************************/
@@ -654,6 +669,7 @@ int sllin_kwthread(void *ptr)
 		wait_event_killable(sl->kwt_wq, kthread_should_stop() ||
 			test_bit(SLF_RXEVENT, &sl->flags) ||
 			test_bit(SLF_TXEVENT, &sl->flags) ||
+			test_bit(SLF_TMOUTEVENT, &sl->flags) ||
 			((sl->lin_state == SLSTATE_IDLE) && test_bit(SLF_MSGEVENT, &sl->flags)));
 
 		if (test_and_clear_bit(SLF_RXEVENT, &sl->flags)) {
@@ -662,6 +678,19 @@ int sllin_kwthread(void *ptr)
 
 		if (test_and_clear_bit(SLF_TXEVENT, &sl->flags)) {
 			printk(KERN_INFO "sllin_kthread TXEVENT \n");
+		}
+
+		if (test_and_clear_bit(SLF_TMOUTEVENT, &sl->flags)) {
+			printk(KERN_INFO "sllin_kthread TMOUTEVENT \n");
+			sl->rx_cnt = 0;
+			sl->rx_expect = 0;
+			sl->rx_lim = sl->lin_master ? 0 : SLLIN_BUFF_LEN;
+			sl->tx_cnt = 0;
+			sl->tx_lim = 0;
+			sl->id_to_send = false;
+			sl->data_to_send = false;
+			
+			sl->lin_state = SLSTATE_IDLE;
 		}
 
 		if ((sl->lin_state == SLSTATE_IDLE) && test_bit(SLF_MSGEVENT, &sl->flags)) {
@@ -719,6 +748,10 @@ int sllin_kwthread(void *ptr)
 				} else {
 					sl->rx_expect = SLLIN_BUFF_DATA + 2;
 					sl->lin_state = SLSTATE_RESPONSE_WAIT;
+					/* If we don't receive anything, timer will "unblock" us */
+					hrtimer_start(&sl->rx_timer, 
+						ktime_add(ktime_get(), sl->rx_timer_timeout),
+						HRTIMER_MODE_ABS);
 					goto slstate_response_wait;
 				}
 				break;
@@ -728,6 +761,7 @@ int sllin_kwthread(void *ptr)
 				if (sl->rx_cnt < sl->rx_expect)
 					continue;
 			
+				hrtimer_cancel(&sl->rx_timer);
 				printk(KERN_INFO "sllin: response received ID %d len %d\n",
 					sl->rx_buff[SLLIN_BUFF_ID], sl->rx_cnt - SLLIN_BUFF_DATA - 1);
 				// check checksum in sl->rx_buff
@@ -757,7 +791,7 @@ int sllin_kwthread(void *ptr)
 		/* netif_wake_queue(sl->dev); allow next Tx packet arrival */
 	}
 
-
+	hrtimer_cancel(&sl->rx_timer);
 	printk(KERN_INFO "sllin: sllin_kwthread stopped.\n");
 
 	return 0;
@@ -903,6 +937,15 @@ static int sllin_open(struct tty_struct *tty)
 
 		sl->lin_state = SLSTATE_IDLE;
 
+#define SAMPLES_PER_CHAR	10
+#define CHARS_TO_TIMEOUT	6
+		hrtimer_init(&sl->rx_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+		sl->rx_timer.function = sllin_rx_timeout_handler;
+		/* timeval_to_ktime(msg_head->ival1); */
+		sl->rx_timer_timeout = ns_to_ktime(
+			(1000000000 / sl->lin_baud) * 
+			SAMPLES_PER_CHAR * CHARS_TO_TIMEOUT); 
+ 
 		set_bit(SLF_INUSE, &sl->flags);
 
 		init_waitqueue_head(&sl->kwt_wq);
