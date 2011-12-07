@@ -89,6 +89,8 @@ MODULE_PARM_DESC(maxdev, "Maximum number of sllin interfaces");
 #define SLLIN_BUFF_ID	 2
 #define SLLIN_BUFF_DATA	 3
 
+#define SLLIN_ID_MASK	0x3f
+
 enum slstate {
 	SLSTATE_IDLE = 0,
 	SLSTATE_BREAK_SENT,
@@ -175,67 +177,27 @@ static int sltty_change_speed(struct tty_struct *tty, unsigned speed)
 /* Send one completely decapsulated can_frame to the network layer */
 static void sll_bump(struct sllin *sl)
 {
-//	struct sk_buff *skb;
-//	struct can_frame cf;
-//	int i, dlc_pos, tmp;
-//	unsigned long ultmp;
-//	char cmd = sl->rbuff[0];
-//
-//	if ((cmd != 't') && (cmd != 'T') && (cmd != 'r') && (cmd != 'R'))
-//		return;
-//
-//	if (cmd & 0x20) /* tiny chars 'r' 't' => standard frame format */
-//		dlc_pos = 4; /* dlc position tiiid */
-//	else
-//		dlc_pos = 9; /* dlc position Tiiiiiiiid */
-//
-//	if (!((sl->rbuff[dlc_pos] >= '0') && (sl->rbuff[dlc_pos] < '9')))
-//		return;
-//
-//	cf.can_dlc = sl->rbuff[dlc_pos] - '0'; /* get can_dlc from ASCII val */
-//
-//	sl->rbuff[dlc_pos] = 0; /* terminate can_id string */
-//
-//	if (strict_strtoul(sl->rbuff+1, 16, &ultmp))
-//		return;
-//
-//	cf.can_id = ultmp;
-//
-//	if (!(cmd & 0x20)) /* NO tiny chars => extended frame format */
-//		cf.can_id |= CAN_EFF_FLAG;
-//
-//	if ((cmd | 0x20) == 'r') /* RTR frame */
-//		cf.can_id |= CAN_RTR_FLAG;
-//
-//	*(u64 *) (&cf.data) = 0; /* clear payload */
-//
-//	for (i = 0, dlc_pos++; i < cf.can_dlc; i++) {
-//
-//		tmp = asc2nibble(sl->rbuff[dlc_pos++]);
-//		if (tmp > 0x0F)
-//			return;
-//		cf.data[i] = (tmp << 4);
-//		tmp = asc2nibble(sl->rbuff[dlc_pos++]);
-//		if (tmp > 0x0F)
-//			return;
-//		cf.data[i] |= tmp;
-//	}
-//
-//
-//	skb = dev_alloc_skb(sizeof(struct can_frame));
-//	if (!skb)
-//		return;
-//
-//	skb->dev = sl->dev;
-//	skb->protocol = htons(ETH_P_CAN);
-//	skb->pkt_type = PACKET_BROADCAST;
-//	skb->ip_summed = CHECKSUM_UNNECESSARY;
-//	memcpy(skb_put(skb, sizeof(struct can_frame)),
-//	       &cf, sizeof(struct can_frame));
-//	netif_rx(skb);
-//
-//	sl->dev->stats.rx_packets++;
-//	sl->dev->stats.rx_bytes += cf.can_dlc;
+	struct sk_buff *skb;
+	struct can_frame cf;
+
+	cf.can_id = sl->rx_buff[SLLIN_BUFF_ID] & SLLIN_ID_MASK;
+	cf.can_dlc = sl->rx_cnt - SLLIN_BUFF_DATA;
+	memcpy(&cf.data, sl->rx_buff + SLLIN_BUFF_DATA, cf.can_dlc);
+
+	skb = dev_alloc_skb(sizeof(struct can_frame));
+	if (!skb)
+		return;
+
+	skb->dev = sl->dev;
+	skb->protocol = htons(ETH_P_CAN);
+	skb->pkt_type = PACKET_BROADCAST;
+	skb->ip_summed = CHECKSUM_UNNECESSARY;
+	memcpy(skb_put(skb, sizeof(struct can_frame)),
+	       &cf, sizeof(struct can_frame));
+	netif_rx(skb);
+
+	sl->dev->stats.rx_packets++;
+	sl->dev->stats.rx_bytes += cf.can_dlc;
 }
 
 
@@ -492,7 +454,7 @@ static void sllin_receive_buf(struct tty_struct *tty,
 int sllin_setup_msg(struct sllin *sl, int mode, int id,
 		unsigned char *data, int len)
 {
-	if (id > 0x3f)
+	if (id > SLLIN_ID_MASK)
 		return -1;
 
 	sl->rx_cnt = 0;
@@ -766,6 +728,8 @@ int sllin_kwthread(void *ptr)
 					sl->rx_buff[SLLIN_BUFF_ID], sl->rx_cnt - SLLIN_BUFF_DATA - 1);
 				// check checksum in sl->rx_buff
 				// send CAN non-RTR frame with data
+				printk(KERN_INFO "sllin: sending NON-RTR CAN frame with LIN payload.");
+				sll_bump(sl); //send packet to the network layer
 				sl->id_to_send = false;
 				sl->lin_state = SLSTATE_IDLE;
 				break;
@@ -785,7 +749,6 @@ int sllin_kwthread(void *ptr)
 
 
 
-		/* sll_bump(sl); send packet to the network layer */
 
 		/* sl->dev->stats.tx_packets++; send frames statistic */
 		/* netif_wake_queue(sl->dev); allow next Tx packet arrival */
@@ -938,7 +901,7 @@ static int sllin_open(struct tty_struct *tty)
 		sl->lin_state = SLSTATE_IDLE;
 
 #define SAMPLES_PER_CHAR	10
-#define CHARS_TO_TIMEOUT	6
+#define CHARS_TO_TIMEOUT	12
 		hrtimer_init(&sl->rx_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 		sl->rx_timer.function = sllin_rx_timeout_handler;
 		/* timeval_to_ktime(msg_head->ival1); */
