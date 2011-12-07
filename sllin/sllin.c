@@ -682,6 +682,8 @@ int sllin_kwthread(void *ptr)
 			}
 
 		release_skb:
+			sl->dev->stats.tx_packets++;
+			sl->dev->stats.tx_bytes += cf->can_dlc;
 			clear_bit(SLF_MSGEVENT, &sl->flags);
 			kfree_skb(sl->rec_skb);
 			netif_wake_queue(sl->dev);
