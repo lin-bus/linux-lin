@@ -88,6 +88,7 @@ MODULE_PARM_DESC(maxdev, "Maximum number of sllin interfaces");
 
 #define SLLIN_ID_MASK	0x3f
 #define SLLIN_ID_MAX	SLLIN_ID_MASK
+#define SLLIN_STATUS_FLAG SLLIN_EFF_FLAG
 
 enum slstate {
 	SLSTATE_IDLE = 0,
@@ -108,6 +109,11 @@ struct sllin_conf_entry {
 #define SLLIN_SLAVE_LOCAL	(1 << (SLLIN_CANFR_FLAGS_OFFS + 3))
 #define SLLIN_SLAVE_REMOTE	(1 << (SLLIN_CANFR_FLAGS_OFFS + 4))
 #define SLLIN_LOC_SLAVE_CACHE	(1 << (SLLIN_CANFR_FLAGS_OFFS + 5))
+
+#define SLLIN_ERR_RX_TIMEOUT    (1 << (SLLIN_CANFR_FLAGS_OFFS + 6))
+#define SLLIN_ERR_CHECKSUM      (1 << (SLLIN_CANFR_FLAGS_OFFS + 7))
+//#define SLLIN_ERR_FRAMING     (1 << (SLLIN_CANFR_FLAGS_OFFS + 8))
+
 	canid_t frame_fl;	/* LIN frame flags. Passed from userspace as canid_t data type */
 	u8 data[8];		/* LIN frame data payload */
 };
@@ -190,15 +196,17 @@ static int sltty_change_speed(struct tty_struct *tty, unsigned speed)
 }
 
 
-/* Send one completely decapsulated can_frame to the network layer */
-static void sll_bump(struct sllin *sl)
+/* Send one can_frame to the network layer */
+static void sllin_send_canfr(struct sllin *sl, canid_t id, char *data, int len)
 {
 	struct sk_buff *skb;
 	struct can_frame cf;
 
-	cf.can_id = sl->rx_buff[SLLIN_BUFF_ID] & SLLIN_ID_MASK;
-	cf.can_dlc = sl->rx_cnt - SLLIN_BUFF_DATA;
-	memcpy(&cf.data, sl->rx_buff + SLLIN_BUFF_DATA, cf.can_dlc);
+	cf.can_id = id;
+	cf.can_dlc = len;
+	if (cf.can_dlc > 0) {
+		memcpy(&cf.data, data, cf.can_dlc);
+	}
 
 	skb = dev_alloc_skb(sizeof(struct can_frame));
 	if (!skb)
@@ -214,6 +222,15 @@ static void sll_bump(struct sllin *sl)
 
 	sl->dev->stats.rx_packets++;
 	sl->dev->stats.rx_bytes += cf.can_dlc;
+
+
+}
+
+static void sll_bump(struct sllin *sl)
+{
+	sllin_send_canfr(sl, sl->rx_buff[SLLIN_BUFF_ID] & SLLIN_ID_MASK,
+		sl->rx_buff + SLLIN_BUFF_DATA,
+		sl->rx_cnt - SLLIN_BUFF_DATA);
 }
 
 /*
@@ -413,6 +430,12 @@ static void sllin_receive_buf(struct tty_struct *tty,
 /*****************************************
  *  sllin message helper routines
  *****************************************/
+void sllin_report_error(struct sllin *sl, int err)
+{
+	sllin_send_canfr(sl, 0 | CAN_EFF_FLAG | 
+		(err & ~SLLIN_ID_MASK), NULL, 0);
+}
+
 int sllin_configure_frame_cache(struct sllin *sl, struct can_frame *cf)
 {
 	struct sllin_conf_entry *sce;
@@ -574,6 +597,7 @@ static enum hrtimer_restart sllin_rx_timeout_handler(struct hrtimer *hrtimer)
 {
 	struct sllin *sl = container_of(hrtimer, struct sllin, rx_timer);
 
+	sllin_report_error(sl, SLLIN_ERR_RX_TIMEOUT);
 	set_bit(SLF_TMOUTEVENT, &sl->flags);
 	wake_up(&sl->kwt_wq);
 
