@@ -90,6 +90,7 @@ MODULE_PARM_DESC(maxdev, "Maximum number of sllin interfaces");
 #define SLLIN_BUFF_DATA	 3
 
 #define SLLIN_ID_MASK	0x3f
+#define SLLIN_ID_MAX	SLLIN_ID_MASK
 
 enum slstate {
 	SLSTATE_IDLE = 0,
@@ -97,6 +98,21 @@ enum slstate {
 	SLSTATE_ID_SENT,
 	SLSTATE_RESPONSE_WAIT,
 	SLSTATE_RESPONSE_SENT,
+};
+
+struct sllin_conf_entry {
+	int dlc;		/* Length of data in LIN frame */
+#define SLLIN_CANFR_FLAGS_OFFS	6 /* Lower 6 bits in can_id correspond to LIN ID */
+/* Save configuration for particualr LIN ID */
+#define SLLIN_SRC_ID_CONF	(1 <<  SLLIN_CANFR_FLAGS_OFFS)
+/* Publisher of particular LIN response is SLLIN Master */
+#define SLLIN_SRC_MASTER	(1 << (SLLIN_CANFR_FLAGS_OFFS + 1))
+#define SLLIN_SRC_SLAVE		(1 << (SLLIN_CANFR_FLAGS_OFFS + 2))
+#define SLLIN_SLAVE_LOCAL	(1 << (SLLIN_CANFR_FLAGS_OFFS + 3))
+#define SLLIN_SLAVE_REMOTE	(1 << (SLLIN_CANFR_FLAGS_OFFS + 4))
+#define SLLIN_LOC_SLAVE_CACHE	(1 << (SLLIN_CANFR_FLAGS_OFFS + 5))
+	u32 frame_fl;		/* LIN frame flags */
+	u8 data[8];		/* LIN frame data payload */
 };
 
 struct sllin {
@@ -135,6 +151,9 @@ struct sllin {
 	struct hrtimer          rx_timer;       /* RX timeout timer */
 	ktime_t	                rx_timer_timeout; /* RX timeout timer value */
 	struct sk_buff          *rec_skb;	/* Socket buffer with received CAN frame */
+
+	struct sllin_conf_entry linfr_cache[SLLIN_ID_MAX + 1]; /* List with configurations for
+						each of 0 to SLLIN_ID_MAX LIN IDs */
 };
 
 static struct net_device **sllin_devs;
@@ -450,6 +469,20 @@ static void sllin_receive_buf(struct tty_struct *tty,
 /*****************************************
  *  sllin message helper routines
  *****************************************/
+int sllin_configure_frame_cache(struct sllin *sl, struct can_frame *cf)
+{
+	struct sllin_conf_entry *sce;
+	if (!(cf->can_id & SLLIN_SRC_ID_CONF))
+		return -1;
+
+	sce = &sl->linfr_cache[cf->can_id & SLLIN_ID_MASK];
+
+	sce->dlc = (sce->dlc > 8) ? 8 : cf->can_dlc;
+	sce->frame_fl = (cf->can_id & ~SLLIN_ID_MASK) & CAN_EFF_FLAG;
+	memcpy(sce->data, cf->data, cf->can_dlc);
+
+	return 0;
+}
 
 int sllin_setup_msg(struct sllin *sl, int mode, int id,
 		unsigned char *data, int len)
@@ -658,12 +691,12 @@ int sllin_kwthread(void *ptr)
 		if ((sl->lin_state == SLSTATE_IDLE) && test_bit(SLF_MSGEVENT, &sl->flags)) {
 			cf = (struct can_frame *)sl->rec_skb->data;
 
-			/* We do care only about SFF frames */
-			if (cf->can_id & CAN_EFF_FLAG)
-				goto release_skb;
-
-			if (cf->can_id & CAN_RTR_FLAG) {
-				printk(KERN_INFO "%s: RTR CAN frame, ID = %x\n",
+			/* "Configuration" frame */
+			if (cf->can_id & CAN_EFF_FLAG) {
+				sllin_configure_frame_cache(sl, cf);
+			} 
+			else if (cf->can_id & CAN_RTR_FLAG) {
+				printk(KERN_INFO "%s: RTR SFF CAN frame, ID = %x\n",
 					__FUNCTION__, cf->can_id & CAN_SFF_MASK);
 				if (sllin_setup_msg(sl, 0, 
 					cf->can_id & CAN_SFF_MASK, NULL, 0) != -1) {
@@ -671,7 +704,7 @@ int sllin_kwthread(void *ptr)
 					sl->data_to_send = false;
 				}
 			} else {
-				printk(KERN_INFO "%s: NON-RTR CAN frame, ID = %x\n",
+				printk(KERN_INFO "%s: NON-RTR SFF CAN frame, ID = %x\n",
 					__FUNCTION__, (int)cf->can_id & CAN_SFF_MASK);
 
 				if (sllin_setup_msg(sl, 0, cf->can_id & CAN_SFF_MASK, 
@@ -681,7 +714,6 @@ int sllin_kwthread(void *ptr)
 				}
 			}
 
-		release_skb:
 			sl->dev->stats.tx_packets++;
 			sl->dev->stats.tx_bytes += cf->can_dlc;
 			clear_bit(SLF_MSGEVENT, &sl->flags);
@@ -828,7 +860,6 @@ static struct sllin *sll_alloc(dev_t line)
 	}
 
 	sl = netdev_priv(dev);
-
 	/* Initialize channel control data */
 	sl->magic = SLLIN_MAGIC;
 	sl->dev	= dev;
