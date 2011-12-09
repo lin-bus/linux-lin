@@ -1,11 +1,8 @@
 /*
  * sllin.c - serial line LIN interface driver (using tty line discipline)
  *
- * This file is derived from linux/drivers/net/slip.c
- *
- * slip.c Authors  : Laurence Culhane <loz@holmes.demon.co.uk>
- *                   Fred N. van Kempen <waltje@uwalt.nl.mugnet.org>
- * sllin.c Author  : Oliver Hartkopp <socketcan@hartkopp.net>
+ * This file is derived from drivers/net/can/slcan.c
+ * slcan.c Author: Oliver Hartkopp <socketcan@hartkopp.net>
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -69,7 +66,7 @@ static __initdata const char banner[] =
 MODULE_ALIAS_LDISC(N_SLLIN);
 MODULE_DESCRIPTION("serial line LIN interface");
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Oliver Hartkopp <socketcan@hartkopp.net>");
+MODULE_AUTHOR("");
 
 #define SLLIN_MAGIC 0x53CA
 // #define BREAK_BY_BAUD
@@ -217,59 +214,6 @@ static void sll_bump(struct sllin *sl)
 
 	sl->dev->stats.rx_packets++;
 	sl->dev->stats.rx_bytes += cf.can_dlc;
-}
-
-
- /************************************************************************
-  *			STANDARD SLLIN ENCAPSULATION			 *
-  ************************************************************************/
-
-/* Convert particular CAN frame into LIN frame and send it to TTY queue. */
-static void sll_encaps(struct sllin *sl, struct can_frame *cf)
-{
-//	int actual, idx, i;
-//	char lframe[16] = {0x00, 0x55}; /* Fake break, Sync byte */
-//	struct tty_struct *tty = sl->tty;
-//
-//	pr_debug("sllin: %s() invoked\n", __FUNCTION__);
-//
-//	/* We do care only about SFF frames */
-//	if (cf->can_id & CAN_EFF_FLAG)
-//		return;
-//
-//	/* Send only header */
-//	if (cf->can_id & CAN_RTR_FLAG) {
-//		pr_debug("sllin: %s() RTR CAN frame\n", __FUNCTION__);
-//		lframe[2] = (u8)cf->can_id; /* Get one byte LIN ID */
-//
-//		sltty_change_speed(tty, sl->lin_baud * 2 / 3);
-//		tty->ops->write(tty, &lframe[0], 1);
-//		sltty_change_speed(tty, sl->lin_baud);
-//		tty->ops->write(tty, &lframe[1], 1);
-//		tty->ops->write(tty, &lframe[2], 1);
-//	} else {
-//		pr_debug("sllin: %s() non-RTR CAN frame\n", __FUNCTION__);
-//		/*	idx = strlen(sl->xbuff);
-//
-//			for (i = 0; i < cf->can_dlc; i++)
-//			sprintf(&sl->xbuff[idx + 2*i], "%02X", cf->data[i]);
-//
-//		 * Order of next two lines is *very* important.
-//		 * When we are sending a little amount of data,
-//		 * the transfer may be completed inside the ops->write()
-//		 * routine, because it's running with interrupts enabled.
-//		 * In this case we *never* got WRITE_WAKEUP event,
-//		 * if we did not request it before write operation.
-//		 *       14 Oct 1994  Dmitry Gorodchanin.
-//
-//		 set_bit(TTY_DO_WRITE_WAKEUP, &sl->tty->flags);
-//		 actual = sl->tty->ops->write(sl->tty, sl->xbuff, strlen(sl->xbuff));
-//		 sl->xleft = strlen(sl->xbuff) - actual;
-//		 sl->xhead = sl->xbuff + actual;
-//		 sl->dev->stats.tx_bytes += cf->can_dlc;
-//		 */
-//	}
-//
 }
 
 /*
