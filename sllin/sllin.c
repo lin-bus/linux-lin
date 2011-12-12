@@ -115,10 +115,11 @@ struct sllin_conf_entry {
 #define SLLIN_SLAVE_LOCAL	(1 << (SLLIN_CANFR_FLAGS_OFFS + 3))
 #define SLLIN_SLAVE_REMOTE	(1 << (SLLIN_CANFR_FLAGS_OFFS + 4))
 #define SLLIN_LOC_SLAVE_CACHE	(1 << (SLLIN_CANFR_FLAGS_OFFS + 5))
+#define SLLIN_CHECKSUM_EXTENDED	(1 << (SLLIN_CANFR_FLAGS_OFFS + 6))
 
-#define SLLIN_ERR_RX_TIMEOUT    (1 << (SLLIN_CANFR_FLAGS_OFFS + 6))
-#define SLLIN_ERR_CHECKSUM      (1 << (SLLIN_CANFR_FLAGS_OFFS + 7))
-//#define SLLIN_ERR_FRAMING     (1 << (SLLIN_CANFR_FLAGS_OFFS + 8))
+#define SLLIN_ERR_RX_TIMEOUT    (1 << (SLLIN_CANFR_FLAGS_OFFS + 7))
+#define SLLIN_ERR_CHECKSUM      (1 << (SLLIN_CANFR_FLAGS_OFFS + 8))
+//#define SLLIN_ERR_FRAMING     (1 << (SLLIN_CANFR_FLAGS_OFFS + 9))
 
 	canid_t frame_fl;	/* LIN frame flags. Passed from userspace as canid_t data type */
 	u8 data[8];		/* LIN frame data payload */
@@ -240,7 +241,7 @@ static void sll_bump(struct sllin *sl)
 {
 	sllin_send_canfr(sl, sl->rx_buff[SLLIN_BUFF_ID] & SLLIN_ID_MASK,
 		sl->rx_buff + SLLIN_BUFF_DATA,
-		sl->rx_cnt - SLLIN_BUFF_DATA);
+		sl->rx_cnt - SLLIN_BUFF_DATA - 1); /* without checksum */
 }
 
 /*
@@ -474,9 +475,29 @@ static int sllin_configure_frame_cache(struct sllin *sl, struct can_frame *cf)
 	return 0;
 }
 
-#define SLLIN_STPMSG_RESPONLY	(1) /* Message will be LIN Response only */
-#define SLLIN_STPMSG_CHCKSUMV1	(1 << 1)
-#define SLLIN_STPMSG_CHCKSUMV2	(1 << 2)
+static inline unsigned sllin_checksum(unsigned char *data, int length, int enhanced_fl)
+{
+	unsigned csum = 0;
+	int i;
+
+	if (enhanced_fl) {
+		i = SLLIN_BUFF_ID;
+	} else {
+		i = SLLIN_BUFF_DATA;
+	}
+	
+	for (; i < length; i++) {
+		csum += data[i];
+		if (csum > 255)
+			csum -= 255;
+	}
+
+	return ~csum & 0xff;
+}
+
+#define SLLIN_STPMSG_RESPONLY		(1) /* Message will be LIN Response only */
+#define SLLIN_STPMSG_CHCKSUM_CLS	(1 << 1)
+#define SLLIN_STPMSG_CHCKSUM_ENH	(1 << 2)
 
 int sllin_setup_msg(struct sllin *sl, int mode, int id,
 		unsigned char *data, int len)
@@ -497,19 +518,10 @@ int sllin_setup_msg(struct sllin *sl, int mode, int id,
 	sl->tx_lim = SLLIN_BUFF_DATA;
 
 	if ((data != NULL) && len) {
-		int i;
-		unsigned csum = 0;
-
 		sl->tx_lim += len;
 		memcpy(sl->tx_buff + SLLIN_BUFF_DATA, data, len);
-		/* compute data parity there */
-		for (i = SLLIN_BUFF_DATA; i < sl->tx_lim; i++) {
-			csum += sl->tx_buff[i];
-			if (csum > 255)
-				csum -= 255;
-		}
-
-		sl->tx_buff[sl->tx_lim++] = csum;
+		sl->tx_buff[sl->tx_lim++] = sllin_checksum(sl->tx_buff,
+				sl->tx_lim, mode & SLLIN_STPMSG_CHCKSUM_ENH);
 	}
 	if (len != 0)
 		sl->rx_lim = SLLIN_BUFF_DATA + len + 1;
@@ -587,7 +599,6 @@ int sllin_send_break(struct sllin *sl)
 int sllin_send_break(struct sllin *sl)
 {
 	struct tty_struct *tty = sl->tty;
-	unsigned long flags;	
 	int retval;
 	unsigned long break_baud;
 	unsigned long usleep_range_min;
@@ -638,6 +649,35 @@ static enum hrtimer_restart sllin_rx_timeout_handler(struct hrtimer *hrtimer)
 	return HRTIMER_NORESTART;
 }
 
+static int sllin_rx_validate(struct sllin *sl)
+{
+	int actual_id;
+	int ext_chcks_fl;
+	int lin_dlc;
+	unsigned char rec_chcksm = sl->rx_buff[sl->rx_cnt - 1];
+	struct sllin_conf_entry *scf;	
+
+	actual_id = sl->rx_buff[SLLIN_BUFF_ID] & SLLIN_ID_MASK; 
+	scf = &sl->linfr_cache[actual_id];
+	lin_dlc = scf->dlc;
+	ext_chcks_fl = scf->frame_fl & SLLIN_CHECKSUM_EXTENDED;
+
+	if (sllin_checksum(sl->rx_buff, sl->rx_cnt - 1, ext_chcks_fl) != 
+		rec_chcksm) {
+
+		/* Type of checksum is configured for particular frame */
+		if (lin_dlc > 0) {
+			return -1;
+		} else {
+			if (sllin_checksum(sl->rx_buff,	sl->rx_cnt - 1,
+				!ext_chcks_fl) != rec_chcksm) {
+				return -1;
+			}
+		}
+	}
+
+	return 0;
+}
 
 /*****************************************
  *  sllin_kwthread - kernel worker thread
@@ -658,7 +698,6 @@ int sllin_kwthread(void *ptr)
 	sltty_change_speed(tty, sl->lin_baud);
 
 	while (!kthread_should_stop()) {
-		int res;
 		struct can_frame *cf;
 		u8 *lin_data;
 		int lin_dlc;
@@ -832,11 +871,18 @@ int sllin_kwthread(void *ptr)
 				hrtimer_cancel(&sl->rx_timer);
 				printk(KERN_INFO "sllin: response received ID %d len %d\n",
 					sl->rx_buff[SLLIN_BUFF_ID], sl->rx_cnt - SLLIN_BUFF_DATA - 1);
-				// FIXME: check checksum in sl->rx_buff
 
-				// send CAN non-RTR frame with data
-				printk(KERN_INFO "sllin: sending NON-RTR CAN frame with LIN payload.");
-				sll_bump(sl); //send packet to the network layer
+				if (sllin_rx_validate(sl) == -1) {
+					printk("sllin: RX validation failed.\n");
+					sllin_report_error(sl, SLLIN_ERR_CHECKSUM);
+					//FIXME tx_stat.err++
+				} else {
+					// send CAN non-RTR frame with data
+					printk(KERN_INFO "sllin: sending NON-RTR CAN"
+						"frame with LIN payload.");
+					sll_bump(sl); //send packet to the network layer
+				}
+
 				sl->id_to_send = false;
 				sl->lin_state = SLSTATE_IDLE;
 				break;
@@ -1142,6 +1188,13 @@ static int __init sllin_init(void)
 		printk(KERN_ERR "sllin: can't register line discipline\n");
 		kfree(sllin_devs);
 	}
+
+#ifdef BREAK_BY_BAUD
+	printk(KERN_INFO "sllin: Break is generated by baud-rate change.");
+#else
+	printk(KERN_INFO "sllin: Break is generated manually with tiny sleep.");
+#endif
+
 	return status;
 }
 
