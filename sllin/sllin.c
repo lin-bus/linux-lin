@@ -571,10 +571,13 @@ int sllin_send_break(struct sllin *sl)
 int sllin_send_break(struct sllin *sl)
 {
 	struct tty_struct *tty = sl->tty;
-	unsigned long break_baud;
 	unsigned long flags;	
 	int retval;
+	unsigned long break_baud;
+	unsigned long usleep_range_min;
+	unsigned long usleep_range_max;
 
+	break_baud = ((sl->lin_baud * 2) / 3);
 	sl->rx_cnt = SLLIN_BUFF_BREAK;
 	sl->rx_expect = SLLIN_BUFF_BREAK + 1;
 	sl->lin_state = SLSTATE_BREAK_SENT;
@@ -586,10 +589,14 @@ int sllin_send_break(struct sllin *sl)
 		return retval;
 
 	//udelay(712);
-	usleep_range(650, 750);
+	usleep_range_min = (1000000l * SLLIN_SAMPLES_PER_CHAR) / break_baud;
+	usleep_range_max = usleep_range_min + 50;
+	usleep_range(usleep_range_min, usleep_range_max);
 
 	retval = tty->ops->break_ctl(tty, 0);
-	usleep_range(50, 100);
+	usleep_range_min = (1000000l * 1 /* 1 bit */) / break_baud;
+	usleep_range_max = usleep_range_min + 30;
+	usleep_range(usleep_range_min, usleep_range_max);
 	
 	tty->ops->flush_buffer(tty);
 
@@ -983,14 +990,12 @@ static int sllin_open(struct tty_struct *tty)
 
 		sl->lin_state = SLSTATE_IDLE;
 
-#define SAMPLES_PER_CHAR	10
-#define CHARS_TO_TIMEOUT	12
 		hrtimer_init(&sl->rx_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 		sl->rx_timer.function = sllin_rx_timeout_handler;
 		/* timeval_to_ktime(msg_head->ival1); */
 		sl->rx_timer_timeout = ns_to_ktime(
-			(1000000000 / sl->lin_baud) * 
-			SAMPLES_PER_CHAR * CHARS_TO_TIMEOUT); 
+			(1000000000l / sl->lin_baud) * 
+			SLLIN_SAMPLES_PER_CHAR * SLLIN_CHARS_TO_TIMEOUT); 
  
 		set_bit(SLF_INUSE, &sl->flags);
 
