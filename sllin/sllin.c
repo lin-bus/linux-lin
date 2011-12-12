@@ -94,7 +94,10 @@ enum slstate {
 	SLSTATE_IDLE = 0,
 	SLSTATE_BREAK_SENT,
 	SLSTATE_ID_SENT,
-	SLSTATE_RESPONSE_WAIT,
+	SLSTATE_RESPONSE_WAIT, /* Wait for response */
+	SLSTATE_RESPONSE_WAIT_BUS, /* Wait for response from LIN bus
+				only (CAN frames from network stack
+				are not processed in this moment) */
 	SLSTATE_RESPONSE_SENT,
 };
 
@@ -139,6 +142,7 @@ struct sllin {
 	int 			lin_state;	/* state */
 	char  			id_to_send;	/* there is ID to be sent */
 	char                    data_to_send;   /* there are data to be sent */
+	char			resp_len_known; /* Length of the response is known */
 
 	unsigned long		flags;		/* Flag values/ mode etc     */
 #define SLF_INUSE		0		/* Channel in use            */
@@ -153,7 +157,8 @@ struct sllin {
 	wait_queue_head_t	kwt_wq;
 	struct hrtimer          rx_timer;       /* RX timeout timer */
 	ktime_t	                rx_timer_timeout; /* RX timeout timer value */
-	struct sk_buff          *rec_skb;	/* Socket buffer with received CAN frame */
+	struct sk_buff          *tx_req_skb;	/* Socket buffer with CAN frame received
+						from network stack*/
 
 	struct sllin_conf_entry linfr_cache[SLLIN_ID_MAX + 1]; /* List with configurations for
 						each of 0 to SLLIN_ID_MAX LIN IDs */
@@ -291,7 +296,7 @@ static netdev_tx_t sll_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	netif_stop_queue(sl->dev);
 
-	sl->rec_skb = skb;
+	sl->tx_req_skb = skb;
 	set_bit(SLF_MSGEVENT, &sl->flags);
 	wake_up(&sl->kwt_wq);
 	spin_unlock(&sl->lock);
@@ -453,16 +458,22 @@ int sllin_configure_frame_cache(struct sllin *sl, struct can_frame *cf)
 	return 0;
 }
 
+#define SLLIN_STPMSG_RESPONLY	(1) /* Message will be LIN Response only */
+#define SLLIN_STPMSG_CHCKSUMV1	(1 << 1)
+#define SLLIN_STPMSG_CHCKSUMV2	(1 << 2)
+
 int sllin_setup_msg(struct sllin *sl, int mode, int id,
 		unsigned char *data, int len)
 {
 	if (id > SLLIN_ID_MASK)
 		return -1;
 
-	sl->rx_cnt = 0;
-	sl->tx_cnt = 0;
-	sl->rx_expect = 0;
-	sl->rx_lim = SLLIN_BUFF_LEN;
+	if (!(mode & SLLIN_STPMSG_RESPONLY)) {
+		sl->rx_cnt = 0;
+		sl->tx_cnt = 0;
+		sl->rx_expect = 0;
+		sl->rx_lim = SLLIN_BUFF_LEN;
+	}
 
 	sl->tx_buff[SLLIN_BUFF_BREAK] = 0;
 	sl->tx_buff[SLLIN_BUFF_SYNC]  = 0x55;
@@ -471,7 +482,7 @@ int sllin_setup_msg(struct sllin *sl, int mode, int id,
 
 	if ((data != NULL) && len) {
 		int i;
-		unsigned csum  = 0;
+		unsigned csum = 0;
 
 		sl->tx_lim += len;
 		memcpy(sl->tx_buff + SLLIN_BUFF_DATA, data, len);
@@ -616,7 +627,7 @@ int sllin_kwthread(void *ptr)
 	struct sched_param schparam = { .sched_priority = 40 };
 	int res;
 	struct can_frame *cf;
-	char *lin_data;
+	u8 *lin_data;
 	int lin_dlc;
 	int tx_bytes = 0; /* Used for Network statistics */
 
@@ -639,7 +650,9 @@ int sllin_kwthread(void *ptr)
 			test_bit(SLF_RXEVENT, &sl->flags) ||
 			test_bit(SLF_TXEVENT, &sl->flags) ||
 			test_bit(SLF_TMOUTEVENT, &sl->flags) ||
-			((sl->lin_state == SLSTATE_IDLE) && test_bit(SLF_MSGEVENT, &sl->flags)));
+			(((sl->lin_state == SLSTATE_IDLE) || 
+				(sl->lin_state == SLSTATE_RESPONSE_WAIT)) 
+				&& test_bit(SLF_MSGEVENT, &sl->flags)));
 
 		if (test_and_clear_bit(SLF_RXEVENT, &sl->flags)) {
 			printk(KERN_INFO "sllin_kthread RXEVENT \n");
@@ -663,7 +676,7 @@ int sllin_kwthread(void *ptr)
 		}
 
 		if ((sl->lin_state == SLSTATE_IDLE) && test_bit(SLF_MSGEVENT, &sl->flags)) {
-			cf = (struct can_frame *)sl->rec_skb->data;
+			cf = (struct can_frame *)sl->tx_req_skb->data;
 
 			/* EFF CAN frame -> "Configuration" frame */
 			if (cf->can_id & CAN_EFF_FLAG) {
@@ -684,7 +697,7 @@ int sllin_kwthread(void *ptr)
 					lin_dlc = sl->linfr_cache[cf->can_id & SLLIN_ID_MASK].dlc;
 				} else {
 					lin_data = NULL;
-					lin_dlc = 0;
+					lin_dlc = sl->linfr_cache[cf->can_id & SLLIN_ID_MASK].dlc;
 				}
 			} else { /* SFF NON-RTR CAN frame -> LIN header + LIN response */
 				printk(KERN_INFO "%s: NON-RTR SFF CAN frame, ID = %x\n",
@@ -698,14 +711,15 @@ int sllin_kwthread(void *ptr)
 				lin_data, lin_dlc) != -1) {
 
 				sl->id_to_send = true;
-				sl->data_to_send = (lin_dlc > 0) ? true : false;
+				sl->data_to_send = (lin_data != NULL) ? true : false;
+				sl->resp_len_known = (lin_dlc > 0) ? true : false;
 				sl->dev->stats.tx_packets++;
 				sl->dev->stats.tx_bytes += tx_bytes;
 			}
 
 		free_skb:
 			clear_bit(SLF_MSGEVENT, &sl->flags);
-			kfree_skb(sl->rec_skb);
+			kfree_skb(sl->tx_req_skb);
 			netif_wake_queue(sl->dev);
 		}
 
@@ -730,7 +744,11 @@ int sllin_kwthread(void *ptr)
 					sl->rx_expect = sl->tx_lim;
 					goto slstate_response_sent;
 				} else {
-					sl->rx_expect = SLLIN_BUFF_DATA + 2;
+					if (sl->resp_len_known) {
+						sl->rx_expect = sl->rx_lim;
+					} else {
+						sl->rx_expect = SLLIN_BUFF_DATA + 2;
+					}
 					sl->lin_state = SLSTATE_RESPONSE_WAIT;
 					/* If we don't receive anything, timer will "unblock" us */
 					hrtimer_start(&sl->rx_timer, 
@@ -742,6 +760,48 @@ int sllin_kwthread(void *ptr)
 
 			case SLSTATE_RESPONSE_WAIT:
 			slstate_response_wait:
+				if (test_bit(SLF_MSGEVENT, &sl->flags)) {
+					cf = (struct can_frame *)sl->tx_req_skb->data;
+
+					/* EFF CAN frame -> "Configuration" frame */
+					if (cf->can_id & CAN_EFF_FLAG) {
+						sllin_configure_frame_cache(sl, cf);
+
+						clear_bit(SLF_MSGEVENT, &sl->flags);
+						kfree_skb(sl->tx_req_skb);
+						netif_wake_queue(sl->dev);
+					} else {
+						unsigned char *lin_buff;
+						lin_buff = (sl->lin_master) ? sl->tx_buff : sl->rx_buff;
+						if (cf->can_id == lin_buff[SLLIN_BUFF_ID] & SLLIN_ID_MASK) {
+							if (sllin_setup_msg(sl, SLLIN_STPMSG_RESPONLY, 
+								cf->can_id & SLLIN_ID_MASK,
+								cf->data, cf->can_dlc) != -1) {
+
+								sl->rx_expect = sl->tx_lim;
+								sl->data_to_send = true;
+								sl->dev->stats.tx_packets++;
+								sl->dev->stats.tx_bytes += tx_bytes;
+
+								if (!sl->lin_master) {
+									sl->tx_cnt = SLLIN_BUFF_DATA;
+								}
+								
+								sllin_send_tx_buff(sl);
+								clear_bit(SLF_MSGEVENT, &sl->flags);
+								kfree_skb(sl->tx_req_skb);
+								netif_wake_queue(sl->dev);
+
+								sl->lin_state = SLSTATE_RESPONSE_SENT;
+								goto slstate_response_sent;
+							}
+						} else {
+							sl->lin_state = SLSTATE_RESPONSE_WAIT_BUS;
+						}
+					}
+				}
+
+			case SLSTATE_RESPONSE_WAIT_BUS:
 				if (sl->rx_cnt < sl->rx_expect)
 					continue;
 			
@@ -756,7 +816,7 @@ int sllin_kwthread(void *ptr)
 				sl->id_to_send = false;
 				sl->lin_state = SLSTATE_IDLE;
 				break;
-
+			
 			case SLSTATE_RESPONSE_SENT:
 			slstate_response_sent:
 				if (sl->rx_cnt < sl->tx_lim)
