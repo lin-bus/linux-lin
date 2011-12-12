@@ -86,9 +86,12 @@ MODULE_PARM_DESC(maxdev, "Maximum number of sllin interfaces");
 #define SLLIN_BUFF_ID	 2
 #define SLLIN_BUFF_DATA	 3
 
-#define SLLIN_ID_MASK	0x3f
-#define SLLIN_ID_MAX	SLLIN_ID_MASK
-#define SLLIN_STATUS_FLAG SLLIN_EFF_FLAG
+#define SLLIN_ID_MASK		0x3f
+#define SLLIN_ID_MAX		SLLIN_ID_MASK
+#define SLLIN_CTRL_FRAME 	CAN_EFF_FLAG
+
+#define SLLIN_SAMPLES_PER_CHAR	10
+#define SLLIN_CHARS_TO_TIMEOUT	12
 
 enum slstate {
 	SLSTATE_IDLE = 0,
@@ -104,7 +107,7 @@ enum slstate {
 struct sllin_conf_entry {
 	int dlc;		/* Length of data in LIN frame */
 #define SLLIN_CANFR_FLAGS_OFFS	6 /* Lower 6 bits in can_id correspond to LIN ID */
-/* Save configuration for particualr LIN ID */
+/* Save configuration for particular LIN ID */
 #define SLLIN_LIN_ID_CONF	(1 <<  SLLIN_CANFR_FLAGS_OFFS)
 /* Publisher of particular LIN response is SLLIN Master */
 #define SLLIN_SRC_MASTER	(1 << (SLLIN_CANFR_FLAGS_OFFS + 1))
@@ -165,6 +168,8 @@ struct sllin {
 };
 
 static struct net_device **sllin_devs;
+static int sllin_configure_frame_cache(struct sllin *sl, struct can_frame *cf);
+
 
 const unsigned char sllin_id_parity_table[] = {
         0x80,0xc0,0x40,0x00,0xc0,0x80,0x00,0x40,
@@ -279,19 +284,24 @@ static void sllin_write_wakeup(struct tty_struct *tty)
 static netdev_tx_t sll_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	struct sllin *sl = netdev_priv(dev);
+	struct can_frame *cf;
 
 	if (skb->len != sizeof(struct can_frame))
 		goto err_out;
 
 	spin_lock(&sl->lock);
 	if (!netif_running(dev))  {
-		spin_unlock(&sl->lock);
 		printk(KERN_WARNING "%s: xmit: iface is down\n", dev->name);
-		goto err_out;
+		goto err_out_unlock;
 	}
 	if (sl->tty == NULL) {
-		spin_unlock(&sl->lock);
-		goto err_out;
+		goto err_out_unlock;
+	}
+
+	cf = (struct can_frame *) skb->data;
+	if (cf->can_id & SLLIN_CTRL_FRAME) {
+		sllin_configure_frame_cache(sl, cf);
+		goto free_out_unlock;
 	}
 
 	netif_stop_queue(sl->dev);
@@ -302,6 +312,9 @@ static netdev_tx_t sll_xmit(struct sk_buff *skb, struct net_device *dev)
 	spin_unlock(&sl->lock);
 	return NETDEV_TX_OK;
 
+free_out_unlock:
+err_out_unlock:
+	spin_unlock(&sl->lock);
 err_out:
 	kfree_skb(skb);
 	return NETDEV_TX_OK;
@@ -441,7 +454,7 @@ void sllin_report_error(struct sllin *sl, int err)
 		(err & ~SLLIN_ID_MASK), NULL, 0);
 }
 
-int sllin_configure_frame_cache(struct sllin *sl, struct can_frame *cf)
+static int sllin_configure_frame_cache(struct sllin *sl, struct can_frame *cf)
 {
 	struct sllin_conf_entry *sce;
 	if (!(cf->can_id & SLLIN_LIN_ID_CONF))
@@ -451,7 +464,10 @@ int sllin_configure_frame_cache(struct sllin *sl, struct can_frame *cf)
 	printk(KERN_INFO "Setting frame cache with EFF CAN frame. "
 		"LIN ID = %d\n", cf->can_id & SLLIN_ID_MASK);
 
-	sce->dlc = (cf->can_dlc > 8) ? 8 : cf->can_dlc;
+	sce->dlc = cf->can_dlc;
+	if (sce->dlc > SLLIN_DATA_MAX)
+		sce->dlc = SLLIN_DATA_MAX;
+
 	sce->frame_fl = (cf->can_id & ~SLLIN_ID_MASK) & CAN_EFF_MASK;
 	memcpy(sce->data, cf->data, cf->can_dlc);
 
@@ -632,10 +648,6 @@ int sllin_kwthread(void *ptr)
 	struct sllin *sl = (struct sllin *)ptr;
 	struct tty_struct *tty = sl->tty;
 	struct sched_param schparam = { .sched_priority = 40 };
-	int res;
-	struct can_frame *cf;
-	u8 *lin_data;
-	int lin_dlc;
 	int tx_bytes = 0; /* Used for Network statistics */
 
 
@@ -646,6 +658,13 @@ int sllin_kwthread(void *ptr)
 	sltty_change_speed(tty, sl->lin_baud);
 
 	while (!kthread_should_stop()) {
+		int res;
+		struct can_frame *cf;
+		u8 *lin_data;
+		int lin_dlc;
+		u8 lin_data_buff[SLLIN_DATA_MAX];
+
+
 		if ((sl->lin_state == SLSTATE_IDLE) && sl->lin_master &&
 			sl->id_to_send) {
 			if(sllin_send_break(sl) < 0) {
@@ -682,55 +701,62 @@ int sllin_kwthread(void *ptr)
 			sl->lin_state = SLSTATE_IDLE;
 		}
 
-		if ((sl->lin_state == SLSTATE_IDLE) && test_bit(SLF_MSGEVENT, &sl->flags)) {
-			cf = (struct can_frame *)sl->tx_req_skb->data;
-
-			/* EFF CAN frame -> "Configuration" frame */
-			if (cf->can_id & CAN_EFF_FLAG) {
-				sllin_configure_frame_cache(sl, cf);
-				goto free_skb;
-			} /* SFF RTR CAN frame -> LIN header */ 
-			else if (cf->can_id & CAN_RTR_FLAG) {
-				printk(KERN_INFO "%s: RTR SFF CAN frame, ID = %x\n",
-					__FUNCTION__, cf->can_id & SLLIN_ID_MASK);
-
-				/* Is there Slave response in linfr_cache to be sent? */
-				if ((sl->linfr_cache[cf->can_id & SLLIN_ID_MASK].frame_fl & 
-					SLLIN_LOC_SLAVE_CACHE) 
-					&& (sl->linfr_cache[cf->can_id & SLLIN_ID_MASK].dlc > 0)) {
-					
-					printk(KERN_INFO "Sending LIN response from linfr_cache\n");
-					lin_data = &sl->linfr_cache[cf->can_id & SLLIN_ID_MASK].data;
-					lin_dlc = sl->linfr_cache[cf->can_id & SLLIN_ID_MASK].dlc;
-				} else {
-					lin_data = NULL;
-					lin_dlc = sl->linfr_cache[cf->can_id & SLLIN_ID_MASK].dlc;
-				}
-			} else { /* SFF NON-RTR CAN frame -> LIN header + LIN response */
-				printk(KERN_INFO "%s: NON-RTR SFF CAN frame, ID = %x\n",
-					__FUNCTION__, (int)cf->can_id & SLLIN_ID_MASK);
-
-				lin_data = cf->data;
-				lin_dlc = tx_bytes = cf->can_dlc;
-			}
-
-			if (sllin_setup_msg(sl, 0, cf->can_id & SLLIN_ID_MASK,
-				lin_data, lin_dlc) != -1) {
-
-				sl->id_to_send = true;
-				sl->data_to_send = (lin_data != NULL) ? true : false;
-				sl->resp_len_known = (lin_dlc > 0) ? true : false;
-				sl->dev->stats.tx_packets++;
-				sl->dev->stats.tx_bytes += tx_bytes;
-			}
-
-		free_skb:
-			clear_bit(SLF_MSGEVENT, &sl->flags);
-			kfree_skb(sl->tx_req_skb);
-			netif_wake_queue(sl->dev);
-		}
-
 		switch (sl->lin_state) {
+			case SLSTATE_IDLE:
+				if (!test_bit(SLF_MSGEVENT, &sl->flags))
+					break;
+
+				cf = (struct can_frame *)sl->tx_req_skb->data;
+
+				/* SFF RTR CAN frame -> LIN header */ 
+				if (cf->can_id & CAN_RTR_FLAG) {
+					spin_lock(&sl->lock);
+					printk(KERN_INFO "%s: RTR SFF CAN frame, ID = %x\n",
+						__FUNCTION__, cf->can_id & SLLIN_ID_MASK);
+
+					/* Is there Slave response in linfr_cache to be sent? */
+					if ((sl->linfr_cache[cf->can_id & SLLIN_ID_MASK].frame_fl & 
+						SLLIN_LOC_SLAVE_CACHE) 
+						&& (sl->linfr_cache[cf->can_id & SLLIN_ID_MASK].dlc > 0)) {
+						
+						printk(KERN_INFO "Sending LIN response from linfr_cache\n");
+						lin_data = sl->linfr_cache[cf->can_id & SLLIN_ID_MASK].data;
+						lin_dlc = sl->linfr_cache[cf->can_id & SLLIN_ID_MASK].dlc;
+						if (lin_dlc > SLLIN_DATA_MAX)
+							lin_dlc = SLLIN_DATA_MAX;
+						memcpy(lin_data_buff, lin_data, lin_dlc);
+						lin_data = lin_data_buff;
+					} else {
+						lin_data = NULL;
+						lin_dlc = sl->linfr_cache[cf->can_id & SLLIN_ID_MASK].dlc;
+					}
+					spin_unlock(&sl->lock);
+				} else { /* SFF NON-RTR CAN frame -> LIN header + LIN response */
+					printk(KERN_INFO "%s: NON-RTR SFF CAN frame, ID = %x\n",
+						__FUNCTION__, (int)cf->can_id & SLLIN_ID_MASK);
+
+					lin_data = cf->data;
+					lin_dlc = cf->can_dlc;
+					if (lin_dlc > SLLIN_DATA_MAX)
+						lin_dlc = SLLIN_DATA_MAX;
+					tx_bytes = lin_dlc;
+				}
+
+				if (sllin_setup_msg(sl, 0, cf->can_id & SLLIN_ID_MASK,
+					lin_data, lin_dlc) != -1) {
+
+					sl->id_to_send = true;
+					sl->data_to_send = (lin_data != NULL) ? true : false;
+					sl->resp_len_known = (lin_dlc > 0) ? true : false;
+					sl->dev->stats.tx_packets++;
+					sl->dev->stats.tx_bytes += tx_bytes;
+				}
+
+				clear_bit(SLF_MSGEVENT, &sl->flags);
+				kfree_skb(sl->tx_req_skb);
+				netif_wake_queue(sl->dev);
+				break;
+
 			case SLSTATE_BREAK_SENT:
 #ifdef BREAK_BY_BAUD
 				if (sl->rx_cnt <= SLLIN_BUFF_BREAK)
@@ -768,43 +794,34 @@ int sllin_kwthread(void *ptr)
 			case SLSTATE_RESPONSE_WAIT:
 			slstate_response_wait:
 				if (test_bit(SLF_MSGEVENT, &sl->flags)) {
+					unsigned char *lin_buff;
 					cf = (struct can_frame *)sl->tx_req_skb->data;
 
-					/* EFF CAN frame -> "Configuration" frame */
-					if (cf->can_id & CAN_EFF_FLAG) {
-						sllin_configure_frame_cache(sl, cf);
+					lin_buff = (sl->lin_master) ? sl->tx_buff : sl->rx_buff;
+					if (cf->can_id == (lin_buff[SLLIN_BUFF_ID] & SLLIN_ID_MASK)) {
+						if (sllin_setup_msg(sl, SLLIN_STPMSG_RESPONLY, 
+							cf->can_id & SLLIN_ID_MASK,
+							cf->data, cf->can_dlc) != -1) {
 
-						clear_bit(SLF_MSGEVENT, &sl->flags);
-						kfree_skb(sl->tx_req_skb);
-						netif_wake_queue(sl->dev);
-					} else {
-						unsigned char *lin_buff;
-						lin_buff = (sl->lin_master) ? sl->tx_buff : sl->rx_buff;
-						if (cf->can_id == lin_buff[SLLIN_BUFF_ID] & SLLIN_ID_MASK) {
-							if (sllin_setup_msg(sl, SLLIN_STPMSG_RESPONLY, 
-								cf->can_id & SLLIN_ID_MASK,
-								cf->data, cf->can_dlc) != -1) {
+							sl->rx_expect = sl->tx_lim;
+							sl->data_to_send = true;
+							sl->dev->stats.tx_packets++;
+							sl->dev->stats.tx_bytes += tx_bytes;
 
-								sl->rx_expect = sl->tx_lim;
-								sl->data_to_send = true;
-								sl->dev->stats.tx_packets++;
-								sl->dev->stats.tx_bytes += tx_bytes;
-
-								if (!sl->lin_master) {
-									sl->tx_cnt = SLLIN_BUFF_DATA;
-								}
-								
-								sllin_send_tx_buff(sl);
-								clear_bit(SLF_MSGEVENT, &sl->flags);
-								kfree_skb(sl->tx_req_skb);
-								netif_wake_queue(sl->dev);
-
-								sl->lin_state = SLSTATE_RESPONSE_SENT;
-								goto slstate_response_sent;
+							if (!sl->lin_master) {
+								sl->tx_cnt = SLLIN_BUFF_DATA;
 							}
-						} else {
-							sl->lin_state = SLSTATE_RESPONSE_WAIT_BUS;
+							
+							sllin_send_tx_buff(sl);
+							clear_bit(SLF_MSGEVENT, &sl->flags);
+							kfree_skb(sl->tx_req_skb);
+							netif_wake_queue(sl->dev);
+
+							sl->lin_state = SLSTATE_RESPONSE_SENT;
+							goto slstate_response_sent;
 						}
+					} else {
+						sl->lin_state = SLSTATE_RESPONSE_WAIT_BUS;
 					}
 				}
 
