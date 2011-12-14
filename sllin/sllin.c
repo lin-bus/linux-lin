@@ -58,6 +58,7 @@
 #include <linux/can.h>
 #include <linux/kthread.h>
 #include <linux/hrtimer.h>
+#include "linux/lin_bus.h"
 
 /* Should be in include/linux/tty.h */
 #define N_SLLIN         	25
@@ -89,10 +90,6 @@ MODULE_PARM_DESC(maxdev, "Maximum number of sllin interfaces");
 #define SLLIN_BUFF_ID	 	2
 #define SLLIN_BUFF_DATA	 	3
 
-#define SLLIN_ID_MASK		0x3f
-#define SLLIN_ID_MAX		SLLIN_ID_MASK
-#define SLLIN_CTRL_FRAME 	CAN_EFF_FLAG
-
 #define SLLIN_SAMPLES_PER_CHAR	10
 #define SLLIN_CHARS_TO_TIMEOUT	12
 
@@ -109,21 +106,6 @@ enum slstate {
 
 struct sllin_conf_entry {
 	int dlc;		/* Length of data in LIN frame */
-#define SLLIN_CANFR_FLAGS_OFFS	6 /* Lower 6 bits in can_id correspond to LIN ID */
-/* Save configuration for particular LIN ID */
-#define SLLIN_LIN_ID_CONF	(1 <<  SLLIN_CANFR_FLAGS_OFFS)
-/* Publisher of particular LIN response is SLLIN Master */
-#define SLLIN_SRC_MASTER	(1 << (SLLIN_CANFR_FLAGS_OFFS + 1))
-#define SLLIN_SRC_SLAVE		(1 << (SLLIN_CANFR_FLAGS_OFFS + 2))
-#define SLLIN_SLAVE_LOCAL	(1 << (SLLIN_CANFR_FLAGS_OFFS + 3))
-#define SLLIN_SLAVE_REMOTE	(1 << (SLLIN_CANFR_FLAGS_OFFS + 4))
-#define SLLIN_LOC_SLAVE_CACHE	(1 << (SLLIN_CANFR_FLAGS_OFFS + 5))
-#define SLLIN_CHECKSUM_EXTENDED	(1 << (SLLIN_CANFR_FLAGS_OFFS + 6))
-
-#define SLLIN_ERR_RX_TIMEOUT    (1 << (SLLIN_CANFR_FLAGS_OFFS + 7))
-#define SLLIN_ERR_CHECKSUM      (1 << (SLLIN_CANFR_FLAGS_OFFS + 8))
-//#define SLLIN_ERR_FRAMING     (1 << (SLLIN_CANFR_FLAGS_OFFS + 9))
-
 	canid_t frame_fl;	/* LIN frame flags. Passed from userspace as canid_t data type */
 	u8 data[8];		/* LIN frame data payload */
 };
