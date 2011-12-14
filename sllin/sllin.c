@@ -60,7 +60,7 @@
 #include <linux/hrtimer.h>
 
 /* Should be in include/linux/tty.h */
-#define N_SLLIN         25
+#define N_SLLIN         	25
 /* -------------------------------- */
 
 static __initdata const char banner[] =
@@ -71,7 +71,7 @@ MODULE_DESCRIPTION("serial line LIN interface");
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("");
 
-#define SLLIN_MAGIC 0x53CA
+#define SLLIN_MAGIC 		0x53CA
 /* #define BREAK_BY_BAUD */
 
 static int maxdev = 10;		/* MAX number of SLLIN channels;
@@ -81,13 +81,13 @@ module_param(maxdev, int, 0);
 MODULE_PARM_DESC(maxdev, "Maximum number of sllin interfaces");
 
 /* maximum buffer len to store whole LIN message*/
-#define SLLIN_DATA_MAX	 8
-#define SLLIN_BUFF_LEN	(1 /*break*/ + 1 /*sync*/ + 1 /*ID*/ + \
-                         SLLIN_DATA_MAX + 1 /*checksum*/)
-#define SLLIN_BUFF_BREAK 0
-#define SLLIN_BUFF_SYNC	 1
-#define SLLIN_BUFF_ID	 2
-#define SLLIN_BUFF_DATA	 3
+#define SLLIN_DATA_MAX	 	8
+#define SLLIN_BUFF_LEN		(1 /*break*/ + 1 /*sync*/ + 1 /*ID*/ + \
+                         	SLLIN_DATA_MAX + 1 /*checksum*/)
+#define SLLIN_BUFF_BREAK 	0
+#define SLLIN_BUFF_SYNC	 	1
+#define SLLIN_BUFF_ID	 	2
+#define SLLIN_BUFF_DATA	 	3
 
 #define SLLIN_ID_MASK		0x3f
 #define SLLIN_ID_MAX		SLLIN_ID_MASK
@@ -161,7 +161,7 @@ struct sllin {
 
 	dev_t			line;
 	struct task_struct	*kwthread;
-	wait_queue_head_t	kwt_wq;
+	wait_queue_head_t	kwt_wq;		/* Wait queue used by kwthread */
 	struct hrtimer          rx_timer;       /* RX timeout timer */
 	ktime_t	                rx_timer_timeout; /* RX timeout timer value */
 	struct sk_buff          *tx_req_skb;	/* Socket buffer with CAN frame received
@@ -175,17 +175,27 @@ static struct net_device **sllin_devs;
 static int sllin_configure_frame_cache(struct sllin *sl, struct can_frame *cf);
 
 
+/* Values of two parity bits in LIN Protected
+   Identifier for each particular LIN ID */
 const unsigned char sllin_id_parity_table[] = {
-        0x80,0xc0,0x40,0x00,0xc0,0x80,0x00,0x40,
-        0x00,0x40,0xc0,0x80,0x40,0x00,0x80,0xc0,
-        0x40,0x00,0x80,0xc0,0x00,0x40,0xc0,0x80,
-        0xc0,0x80,0x00,0x40,0x80,0xc0,0x40,0x00,
-        0x00,0x40,0xc0,0x80,0x40,0x00,0x80,0xc0,
-        0x80,0xc0,0x40,0x00,0xc0,0x80,0x00,0x40,
-        0xc0,0x80,0x00,0x40,0x80,0xc0,0x40,0x00,
-        0x40,0x00,0x80,0xc0,0x00,0x40,0xc0,0x80
+        0x80, 0xc0, 0x40, 0x00, 0xc0, 0x80, 0x00, 0x40,
+        0x00, 0x40, 0xc0, 0x80, 0x40, 0x00, 0x80, 0xc0,
+        0x40, 0x00, 0x80, 0xc0, 0x00, 0x40, 0xc0, 0x80,
+        0xc0, 0x80, 0x00, 0x40, 0x80, 0xc0, 0x40, 0x00,
+        0x00, 0x40, 0xc0, 0x80, 0x40, 0x00, 0x80, 0xc0,
+        0x80, 0xc0, 0x40, 0x00, 0xc0, 0x80, 0x00, 0x40,
+        0xc0, 0x80, 0x00, 0x40, 0x80, 0xc0, 0x40, 0x00,
+        0x40, 0x00, 0x80, 0xc0, 0x00, 0x40, 0xc0, 0x80
 };
 
+/**
+ * sltty_change_speed() -- Change baudrate of Serial device belonging to particular @tty
+ *
+ * @tty:	Pointer to TTY to change speed for.
+ * @speed:	Integer value of new speed. It is possible to 
+ *		assign non-standard values, i.e. those which
+ *		are not defined in termbits.h.
+ */
 static int sltty_change_speed(struct tty_struct *tty, unsigned speed)
 {
 	struct ktermios old_termios;
@@ -240,6 +250,11 @@ static void sllin_send_canfr(struct sllin *sl, canid_t id, char *data, int len)
 
 }
 
+/**
+ * sll_bump() -- Send data of received LIN frame (existing in sl->rx_buff) as CAN frame
+ *
+ * @sl:
+ */
 static void sll_bump(struct sllin *sl)
 {
 	sllin_send_canfr(sl, sl->rx_buff[SLLIN_BUFF_ID] & SLLIN_ID_MASK,
@@ -284,7 +299,12 @@ static void sllin_write_wakeup(struct tty_struct *tty)
 	pr_debug("sllin: sllin_write_wakeup sent %d, wakeup\n", sl->tx_cnt);
 }
 
-/* Send a can_frame to a TTY queue. */
+/**
+ * sll_xmit() -- Send a can_frame to a TTY queue.
+ *
+ * @skb: Pointer to Socket buffer to be sent.
+ * @dev: Network device where @skb will be sent.
+ */
 static netdev_tx_t sll_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	struct sllin *sl = netdev_priv(dev);
@@ -397,15 +417,6 @@ static void sll_setup(struct net_device *dev)
   Routines looking at TTY side.
  ******************************************/
 
-/*
- * Handle the 'receiver data ready' interrupt.
- * This function is called by the 'tty_io' module in the kernel when
- * a block of SLLIN data has been received, which can now be decapsulated
- * and sent on to some IP layer for further processing. This will not
- * be re-entered while running but other ldisc functions may be called
- * in parallel
- */
-
 static void sllin_receive_buf(struct tty_struct *tty,
 			      const unsigned char *cp, char *fp, int count)
 {
@@ -452,12 +463,26 @@ static void sllin_receive_buf(struct tty_struct *tty,
 /*****************************************
  *  sllin message helper routines
  *****************************************/
+/**
+ * sllin_report_error() -- Report an error by sending CAN frame \
+ * 	with particular error flag set in can_id
+ *
+ * @sl:
+ * @err: Error flag to be sent.
+ */
 void sllin_report_error(struct sllin *sl, int err)
 {
 	sllin_send_canfr(sl, 0 | CAN_EFF_FLAG | 
 		(err & ~SLLIN_ID_MASK), NULL, 0);
 }
 
+/**
+ * sllin_configure_frame_cache() -- Configure particular entry in linfr_cache
+ *
+ * @sl:
+ * @cf: Pointer to CAN frame sent to this driver
+ *	holding configuration information
+ */
 static int sllin_configure_frame_cache(struct sllin *sl, struct can_frame *cf)
 {
 	struct sllin_conf_entry *sce;
@@ -478,6 +503,15 @@ static int sllin_configure_frame_cache(struct sllin *sl, struct can_frame *cf)
 	return 0;
 }
 
+/**
+ * sllin_checksum() -- Count checksum for particular data
+ * 
+ * @data: 	 Pointer to the buffer containing whole LIN
+ *		 frame (i.e. including break and sync bytes).
+ * @length: 	 Length of the buffer.
+ * @enhanced_fl: Flag determining whether Enhanced or Classic
+ *		 checksum should be counted.
+ */
 static inline unsigned sllin_checksum(unsigned char *data, int length, int enhanced_fl)
 {
 	unsigned csum = 0;
@@ -652,6 +686,11 @@ static enum hrtimer_restart sllin_rx_timeout_handler(struct hrtimer *hrtimer)
 	return HRTIMER_NORESTART;
 }
 
+/**
+ * sllin_rx_validate() -- Validate received frame, i,e. check checksum
+ *
+ * @sl:
+ */
 static int sllin_rx_validate(struct sllin *sl)
 {
 	int actual_id;
