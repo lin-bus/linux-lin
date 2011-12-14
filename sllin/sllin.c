@@ -106,7 +106,8 @@ enum slstate {
 
 struct sllin_conf_entry {
 	int dlc;		/* Length of data in LIN frame */
-	canid_t frame_fl;	/* LIN frame flags. Passed from userspace as canid_t data type */
+	canid_t frame_fl;	/* LIN frame flags. Passed from userspace as
+				   canid_t data type */
 	u8 data[8];		/* LIN frame data payload */
 };
 
@@ -146,11 +147,11 @@ struct sllin {
 	wait_queue_head_t	kwt_wq;		/* Wait queue used by kwthread */
 	struct hrtimer          rx_timer;       /* RX timeout timer */
 	ktime_t	                rx_timer_timeout; /* RX timeout timer value */
-	struct sk_buff          *tx_req_skb;	/* Socket buffer with CAN frame received
-						from network stack*/
+	struct sk_buff          *tx_req_skb;	/* Socket buffer with CAN frame
+						received from network stack*/
 
-	struct sllin_conf_entry linfr_cache[LIN_ID_MAX + 1]; /* List with configurations for
-						each of 0 to LIN_ID_MAX LIN IDs */
+	/* List with configurations for	each of 0 to LIN_ID_MAX LIN IDs */
+	struct sllin_conf_entry linfr_cache[LIN_ID_MAX + 1];
 };
 
 static struct net_device **sllin_devs;
@@ -171,10 +172,11 @@ const unsigned char sllin_id_parity_table[] = {
 };
 
 /**
- * sltty_change_speed() -- Change baudrate of Serial device belonging to particular @tty
+ * sltty_change_speed() -- Change baudrate of Serial device belonging
+ *			   to particular @tty
  *
  * @tty:	Pointer to TTY to change speed for.
- * @speed:	Integer value of new speed. It is possible to 
+ * @speed:	Integer value of new speed. It is possible to
  *		assign non-standard values, i.e. those which
  *		are not defined in termbits.h.
  */
@@ -233,7 +235,8 @@ static void sllin_send_canfr(struct sllin *sl, canid_t id, char *data, int len)
 }
 
 /**
- * sll_bump() -- Send data of received LIN frame (existing in sl->rx_buff) as CAN frame
+ * sll_bump() -- Send data of received LIN frame (existing in sl->rx_buff)
+ *		 as CAN frame
  *
  * @sl:
  */
@@ -264,11 +267,13 @@ static void sllin_write_wakeup(struct tty_struct *tty)
 		remains = SLLIN_BUFF_BREAK + 1 - sl->tx_cnt;
 
 	if (remains > 0) {
-		actual = tty->ops->write(tty, sl->tx_buff + sl->tx_cnt, sl->tx_cnt - sl->tx_lim);
+		actual = tty->ops->write(tty, sl->tx_buff + sl->tx_cnt,
+			sl->tx_cnt - sl->tx_lim);
 		sl->tx_cnt += actual;
 
 		if (sl->tx_cnt < sl->tx_lim) {
-			pr_debug("sllin: sllin_write_wakeup sent %d, remains %d, waiting\n",
+			pr_debug("sllin: sllin_write_wakeup sent %d, "
+				"remains %d, waiting\n",
 				sl->tx_cnt, sl->tx_lim - sl->tx_cnt);
 			return;
 		}
@@ -436,7 +441,7 @@ static void sllin_receive_buf(struct tty_struct *tty,
 	if (sl->rx_cnt >= sl->rx_expect) {
 		set_bit(SLF_RXEVENT, &sl->flags);
 		wake_up(&sl->kwt_wq);
-		pr_debug("sllin: sllin_receive_buf count %d, wakeup\n", sl->rx_cnt);
+		pr_debug("sllin: sllin_receive_buf count %d, wakeup\n",	sl->rx_cnt);
 	} else {
 		pr_debug("sllin: sllin_receive_buf count %d, waiting\n", sl->rx_cnt);
 	}
@@ -446,7 +451,7 @@ static void sllin_receive_buf(struct tty_struct *tty,
  *  sllin message helper routines
  *****************************************/
 /**
- * sllin_report_error() -- Report an error by sending CAN frame \
+ * sllin_report_error() -- Report an error by sending CAN frame
  * 	with particular error flag set in can_id
  *
  * @sl:
@@ -454,7 +459,7 @@ static void sllin_receive_buf(struct tty_struct *tty,
  */
 void sllin_report_error(struct sllin *sl, int err)
 {
-	sllin_send_canfr(sl, 0 | CAN_EFF_FLAG | 
+	sllin_send_canfr(sl, 0 | CAN_EFF_FLAG |
 		(err & ~LIN_ID_MASK), NULL, 0);
 }
 
@@ -487,7 +492,7 @@ static int sllin_configure_frame_cache(struct sllin *sl, struct can_frame *cf)
 
 /**
  * sllin_checksum() -- Count checksum for particular data
- * 
+ *
  * @data: 	 Pointer to the buffer containing whole LIN
  *		 frame (i.e. including break and sync bytes).
  * @length: 	 Length of the buffer.
@@ -504,7 +509,7 @@ static inline unsigned sllin_checksum(unsigned char *data, int length, int enhan
 	} else {
 		i = SLLIN_BUFF_DATA;
 	}
-	
+
 	for (; i < length; i++) {
 		csum += data[i];
 		if (csum > 255)
@@ -578,7 +583,7 @@ int sllin_send_tx_buff(struct sllin *sl)
 			clear_bit(TTY_DO_WRITE_WAKEUP, &tty->flags);
 			return -1;
 		}
-		
+
 		remains -= res;
 		sl->tx_cnt += res;
 	}
@@ -628,7 +633,7 @@ int sllin_send_break(struct sllin *sl)
 	sl->rx_expect = SLLIN_BUFF_BREAK + 1;
 	sl->lin_state = SLSTATE_BREAK_SENT;
 
-	/* Do the break ourselves; Inspired by 
+	/* Do the break ourselves; Inspired by
 	   http://lxr.linux.no/#linux+v3.1.2/drivers/tty/tty_io.c#L2452 */
 	retval = tty->ops->break_ctl(tty, -1);
 	if (retval)
@@ -643,7 +648,7 @@ int sllin_send_break(struct sllin *sl)
 	usleep_range_min = (1000000l * 1 /* 1 bit */) / break_baud;
 	usleep_range_max = usleep_range_min + 30;
 	usleep_range(usleep_range_min, usleep_range_max);
-	
+
 	tty->ops->flush_buffer(tty);
 
 	sl->tx_cnt = SLLIN_BUFF_SYNC;
@@ -679,14 +684,14 @@ static int sllin_rx_validate(struct sllin *sl)
 	int ext_chcks_fl;
 	int lin_dlc;
 	unsigned char rec_chcksm = sl->rx_buff[sl->rx_cnt - 1];
-	struct sllin_conf_entry *scf;	
+	struct sllin_conf_entry *scf;
 
-	actual_id = sl->rx_buff[SLLIN_BUFF_ID] & LIN_ID_MASK; 
+	actual_id = sl->rx_buff[SLLIN_BUFF_ID] & LIN_ID_MASK;
 	scf = &sl->linfr_cache[actual_id];
 	lin_dlc = scf->dlc;
 	ext_chcks_fl = scf->frame_fl & LIN_CHECKSUM_EXTENDED;
 
-	if (sllin_checksum(sl->rx_buff, sl->rx_cnt - 1, ext_chcks_fl) != 
+	if (sllin_checksum(sl->rx_buff, sl->rx_cnt - 1, ext_chcks_fl) !=
 		rec_chcksm) {
 
 		/* Type of checksum is configured for particular frame */
@@ -739,20 +744,20 @@ int sllin_kwthread(void *ptr)
 			test_bit(SLF_RXEVENT, &sl->flags) ||
 			test_bit(SLF_TXEVENT, &sl->flags) ||
 			test_bit(SLF_TMOUTEVENT, &sl->flags) ||
-			(((sl->lin_state == SLSTATE_IDLE) || 
-				(sl->lin_state == SLSTATE_RESPONSE_WAIT)) 
+			(((sl->lin_state == SLSTATE_IDLE) ||
+				(sl->lin_state == SLSTATE_RESPONSE_WAIT))
 				&& test_bit(SLF_MSGEVENT, &sl->flags)));
 
 		if (test_and_clear_bit(SLF_RXEVENT, &sl->flags)) {
-			pr_debug("sllin: sllin_kthread RXEVENT \n");
+			pr_debug("sllin: sllin_kthread RXEVENT\n");
 		}
 
 		if (test_and_clear_bit(SLF_TXEVENT, &sl->flags)) {
-			pr_debug("sllin: sllin_kthread TXEVENT \n");
+			pr_debug("sllin: sllin_kthread TXEVENT\n");
 		}
 
 		if (test_and_clear_bit(SLF_TMOUTEVENT, &sl->flags)) {
-			pr_debug("sllin: sllin_kthread TMOUTEVENT \n");
+			pr_debug("sllin: sllin_kthread TMOUTEVENT\n");
 			sl->rx_cnt = 0;
 			sl->rx_expect = 0;
 			sl->rx_lim = sl->lin_master ? 0 : SLLIN_BUFF_LEN;
@@ -760,7 +765,7 @@ int sllin_kwthread(void *ptr)
 			sl->tx_lim = 0;
 			sl->id_to_send = false;
 			sl->data_to_send = false;
-			
+
 			sl->lin_state = SLSTATE_IDLE;
 		}
 
@@ -771,17 +776,17 @@ int sllin_kwthread(void *ptr)
 
 				cf = (struct can_frame *)sl->tx_req_skb->data;
 
-				/* SFF RTR CAN frame -> LIN header */ 
+				/* SFF RTR CAN frame -> LIN header */
 				if (cf->can_id & CAN_RTR_FLAG) {
 					spin_lock(&sl->lock);
 					pr_debug("sllin: %s: RTR SFF CAN frame, ID = %x\n",
 						__FUNCTION__, cf->can_id & LIN_ID_MASK);
 
 					/* Is there Slave response in linfr_cache to be sent? */
-					if ((sl->linfr_cache[cf->can_id & LIN_ID_MASK].frame_fl & 
-						LIN_LOC_SLAVE_CACHE) 
+					if ((sl->linfr_cache[cf->can_id & LIN_ID_MASK].frame_fl &
+						LIN_LOC_SLAVE_CACHE)
 						&& (sl->linfr_cache[cf->can_id & LIN_ID_MASK].dlc > 0)) {
-						
+
 						pr_debug("sllin: Sending LIN response from linfr_cache\n");
 						lin_data = sl->linfr_cache[cf->can_id & LIN_ID_MASK].data;
 						lin_dlc = sl->linfr_cache[cf->can_id & LIN_ID_MASK].dlc;
@@ -847,7 +852,7 @@ int sllin_kwthread(void *ptr)
 					}
 					sl->lin_state = SLSTATE_RESPONSE_WAIT;
 					/* If we don't receive anything, timer will "unblock" us */
-					hrtimer_start(&sl->rx_timer, 
+					hrtimer_start(&sl->rx_timer,
 						ktime_add(ktime_get(), sl->rx_timer_timeout),
 						HRTIMER_MODE_ABS);
 					goto slstate_response_wait;
@@ -862,7 +867,7 @@ int sllin_kwthread(void *ptr)
 
 					lin_buff = (sl->lin_master) ? sl->tx_buff : sl->rx_buff;
 					if (cf->can_id == (lin_buff[SLLIN_BUFF_ID] & LIN_ID_MASK)) {
-						if (sllin_setup_msg(sl, SLLIN_STPMSG_RESPONLY, 
+						if (sllin_setup_msg(sl, SLLIN_STPMSG_RESPONLY,
 							cf->can_id & LIN_ID_MASK,
 							cf->data, cf->can_dlc) != -1) {
 
@@ -874,7 +879,7 @@ int sllin_kwthread(void *ptr)
 							if (!sl->lin_master) {
 								sl->tx_cnt = SLLIN_BUFF_DATA;
 							}
-							
+
 							sllin_send_tx_buff(sl);
 							clear_bit(SLF_MSGEVENT, &sl->flags);
 							kfree_skb(sl->tx_req_skb);
@@ -891,7 +896,7 @@ int sllin_kwthread(void *ptr)
 			case SLSTATE_RESPONSE_WAIT_BUS:
 				if (sl->rx_cnt < sl->rx_expect)
 					continue;
-			
+
 				hrtimer_cancel(&sl->rx_timer);
 				pr_debug("sllin: response received ID %d len %d\n",
 					sl->rx_buff[SLLIN_BUFF_ID], sl->rx_cnt - SLLIN_BUFF_DATA - 1);
@@ -910,12 +915,12 @@ int sllin_kwthread(void *ptr)
 				sl->id_to_send = false;
 				sl->lin_state = SLSTATE_IDLE;
 				break;
-			
+
 			case SLSTATE_RESPONSE_SENT:
 			slstate_response_sent:
 				if (sl->rx_cnt < sl->tx_lim)
 					continue;
-				
+
 				sll_bump(sl); //send packet to the network layer
 				pr_debug("sllin: response sent ID %d len %d\n",
 					sl->rx_buff[SLLIN_BUFF_ID], sl->rx_cnt - SLLIN_BUFF_DATA - 1);
@@ -1081,9 +1086,9 @@ static int sllin_open(struct tty_struct *tty)
 		sl->rx_timer.function = sllin_rx_timeout_handler;
 		/* timeval_to_ktime(msg_head->ival1); */
 		sl->rx_timer_timeout = ns_to_ktime(
-			(1000000000l / sl->lin_baud) * 
-			SLLIN_SAMPLES_PER_CHAR * SLLIN_CHARS_TO_TIMEOUT); 
- 
+			(1000000000l / sl->lin_baud) *
+			SLLIN_SAMPLES_PER_CHAR * SLLIN_CHARS_TO_TIMEOUT);
+
 		set_bit(SLF_INUSE, &sl->flags);
 
 		init_waitqueue_head(&sl->kwt_wq);
@@ -1098,7 +1103,7 @@ static int sllin_open(struct tty_struct *tty)
 
 	/* Done.  We have linked the TTY line to a channel. */
 	rtnl_unlock();
-	tty->receive_room = SLLIN_BUFF_LEN * 40;	/* We don't flow control */
+	tty->receive_room = SLLIN_BUFF_LEN * 40; /* We don't flow control */
 
 	/* TTY layer expects 0 on success */
 	return 0;
