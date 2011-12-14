@@ -230,8 +230,6 @@ static void sllin_send_canfr(struct sllin *sl, canid_t id, char *data, int len)
 
 	sl->dev->stats.rx_packets++;
 	sl->dev->stats.rx_bytes += cf.can_dlc;
-
-
 }
 
 /**
@@ -459,6 +457,16 @@ static void sllin_receive_buf(struct tty_struct *tty,
  */
 void sllin_report_error(struct sllin *sl, int err)
 {
+	switch (err) {
+		case LIN_ERR_CHECKSUM:
+			sl->dev->stats.rx_crc_errors++;
+			break;
+
+		case LIN_ERR_RX_TIMEOUT:		
+			sl->dev->stats.rx_errors++;
+			break;
+	}
+
 	sllin_send_canfr(sl, 0 | CAN_EFF_FLAG |
 		(err & ~LIN_ID_MASK), NULL, 0);
 }
@@ -905,7 +913,6 @@ int sllin_kwthread(void *ptr)
 				if (sllin_rx_validate(sl) == -1) {
 					pr_debug("sllin: RX validation failed.\n");
 					sllin_report_error(sl, LIN_ERR_CHECKSUM);
-					/* FIXME tx_stat.err++ */
 				} else {
 					/* Send CAN non-RTR frame with data */
 					pr_debug("sllin: sending NON-RTR CAN"
@@ -930,12 +937,6 @@ int sllin_kwthread(void *ptr)
 				sl->lin_state = SLSTATE_IDLE;
 				break;
 		}
-
-
-
-
-		/* sl->dev->stats.tx_packets++; send frames statistic */
-		/* netif_wake_queue(sl->dev); allow next Tx packet arrival */
 	}
 
 	hrtimer_cancel(&sl->rx_timer);

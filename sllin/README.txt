@@ -132,6 +132,15 @@ $ cangen sllin0 -r -I 8 -n 1 -L 0
   sllin0    8  [0] remote request
   sllin0      2000  [0]
 
+$ ip -s link show dev sllin0
+14: sllin0: <NOARP,UP,LOWER_UP> mtu 16 qdisc pfifo_fast state UNKNOWN qlen 10
+    link/can 
+    RX: bytes  packets  errors  dropped overrun mcast   
+    2          4        1       0       0       0      
+    TX: bytes  packets  errors  dropped carrier collsns 
+    0          4        0       0       0       0 
+
+
 
 # ----- Configure frame cache -----
 # Configure frame cache to answer on LIN ID = 8
