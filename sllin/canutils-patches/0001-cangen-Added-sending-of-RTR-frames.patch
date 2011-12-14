@@ -1,0 +1,64 @@
+From f9676c3b4416be8eb7658d3e003dcb12ee7121d9 Mon Sep 17 00:00:00 2001
+From: Rostislav Lisovy <lisovy@gmail.com>
+Date: Wed, 7 Dec 2011 15:44:59 +0100
+Subject: [PATCH] cangen: Added sending of RTR frames.
+
+---
+ can-utils/cangen.c |   13 +++++++++++--
+ 1 files changed, 11 insertions(+), 2 deletions(-)
+
+diff --git a/can-utils/cangen.c b/can-utils/cangen.c
+index bd48e79..ee3403f 100644
+--- a/can-utils/cangen.c
++++ b/can-utils/cangen.c
+@@ -105,7 +105,8 @@ void print_usage(char *prg)
+ 		"printing sent CAN frames)\n");
+ 	fprintf(stderr, "         -b            (set SO_SNDBUF value of a buffer "
+ 		"-- the kernel doubles this value)\n");
+-	fprintf(stderr, "         -P            (set SO_PRIORITY of a socket)\n\n");
++	fprintf(stderr, "         -P            (set SO_PRIORITY of a socket)\n");
++	fprintf(stderr, "         -r            (send RTR frame)\n\n");
+ 	fprintf(stderr, "Generation modes:\n");
+ 	fprintf(stderr, "'r'        => random values (default)\n");
+ 	fprintf(stderr, "'i'        => increment values\n");
+@@ -144,6 +145,7 @@ int main(int argc, char **argv)
+ 	unsigned char dlc_mode = MODE_RANDOM;
+ 	unsigned char loopback_disable = 0;
+ 	unsigned char verbose = 0;
++	unsigned char rtr_frame = 0;
+ 	int count = 0;
+ 	int snd_buf = 0;
+ 	int sk_prio = -1;
+@@ -170,7 +172,7 @@ int main(int argc, char **argv)
+ 	signal(SIGHUP, sigterm);
+ 	signal(SIGINT, sigterm);
+ 
+-	while ((opt = getopt(argc, argv, "ig:eI:L:D:xp:n:vb:P:h?")) != -1) {
++	while ((opt = getopt(argc, argv, "ig:eI:L:D:xp:n:vb:P:rh?")) != -1) {
+ 		switch (opt) {
+ 
+ 		case 'i':
+@@ -237,6 +239,10 @@ int main(int argc, char **argv)
+ 			sk_prio = atoi(optarg);
+ 			break;
+ 
++		case 'r':
++			rtr_frame = 1;
++			break;
++
+ 		case 'p':
+ 			polltimeout = strtoul(optarg, NULL, 10);
+ 			break;
+@@ -281,6 +287,9 @@ int main(int argc, char **argv)
+ 			frame.can_id &= CAN_SFF_MASK;
+ 	}
+ 
++	if (rtr_frame)
++		frame.can_id |=  CAN_RTR_FLAG;
++
+ 	if (extended)
+ 		frame.can_id |=  CAN_EFF_FLAG;
+ 
+-- 
+1.7.0.4
+

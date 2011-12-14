@@ -1,0 +1,33 @@
+From 8b77f82919d881ed5b96d4c180bcacff314a143d Mon Sep 17 00:00:00 2001
+From: Rostislav Lisovy <lisovy@gmail.com>
+Date: Wed, 14 Dec 2011 13:46:42 +0100
+Subject: [PATCH] slcan_attach: Works only with sllin for now.
+
+---
+ can-utils/slcan_attach.c |    3 ++-
+ 1 files changed, 2 insertions(+), 1 deletions(-)
+
+diff --git a/can-utils/slcan_attach.c b/can-utils/slcan_attach.c
+index 89366be..3686a29 100644
+--- a/can-utils/slcan_attach.c
++++ b/can-utils/slcan_attach.c
+@@ -55,6 +55,7 @@
+ #include <net/if.h>
+ 
+ #define LDISC_N_SLCAN 17 /* default slcan line discipline since Kernel 2.6.25 */
++#define LDISC_N_SLLIN 25
+ 
+ void print_usage(char *prg)
+ {
+@@ -79,7 +80,7 @@ void print_usage(char *prg)
+ int main(int argc, char **argv)
+ {
+ 	int fd;
+-	int ldisc = LDISC_N_SLCAN;
++	int ldisc = LDISC_N_SLLIN;
+ 	int detach = 0;
+ 	int waitkey = 0;
+ 	int send_open = 0;
+-- 
+1.7.0.4
+
