@@ -36,6 +36,8 @@
  *
  */
 
+#define DEBUG 		1 /* Enables pr_debug() printouts */
+
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 
@@ -59,6 +61,7 @@
 
 /* Should be in include/linux/tty.h */
 #define N_SLLIN         25
+/* -------------------------------- */
 
 static __initdata const char banner[] =
 	KERN_INFO "sllin: serial line LIN interface driver\n";
@@ -69,7 +72,7 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR("");
 
 #define SLLIN_MAGIC 0x53CA
-// #define BREAK_BY_BAUD
+/* #define BREAK_BY_BAUD */
 
 static int maxdev = 10;		/* MAX number of SLLIN channels;
 				   This can be overridden with
@@ -268,7 +271,7 @@ static void sllin_write_wakeup(struct tty_struct *tty)
 		sl->tx_cnt += actual;
 
 		if (sl->tx_cnt < sl->tx_lim) {
-			printk(KERN_INFO "sllin_write_wakeup sent %d, remains %d, waiting\n",
+			pr_debug("sllin: sllin_write_wakeup sent %d, remains %d, waiting\n",
 				sl->tx_cnt, sl->tx_lim - sl->tx_cnt);
 			return;
 		}
@@ -278,7 +281,7 @@ static void sllin_write_wakeup(struct tty_struct *tty)
 	set_bit(SLF_TXEVENT, &sl->flags);
 	wake_up(&sl->kwt_wq);
 
-	printk(KERN_INFO "sllin_write_wakeup sent %d, wakeup\n", sl->tx_cnt);
+	pr_debug("sllin: sllin_write_wakeup sent %d, wakeup\n", sl->tx_cnt);
 }
 
 /* Send a can_frame to a TTY queue. */
@@ -408,7 +411,7 @@ static void sllin_receive_buf(struct tty_struct *tty,
 {
 	struct sllin *sl = (struct sllin *) tty->disc_data;
 
-	printk(KERN_INFO "sllin_receive_buf invoked\n");
+	pr_debug("sllin: sllin_receive_buf invoked\n");
 
 	if (!sl || sl->magic != SLLIN_MAGIC || !netif_running(sl->dev))
 		return;
@@ -418,7 +421,7 @@ static void sllin_receive_buf(struct tty_struct *tty,
 		if (fp && *fp++) {
 			if (!test_and_set_bit(SLF_ERROR, &sl->flags))
 				sl->dev->stats.rx_errors++;
-			printk(KERN_INFO "sllin_receive_buf char 0x%02x ignored "
+			pr_debug("sllin: sllin_receive_buf char 0x%02x ignored "
 				"due marker 0x%02x, flags 0x%lx\n",
 				*cp, *(fp-1), sl->flags);
 			cp++;
@@ -432,7 +435,7 @@ static void sllin_receive_buf(struct tty_struct *tty,
 				sl->rx_buff[sl->rx_cnt++] = 0x00;
 			}
 #endif
-			printk(KERN_INFO "LIN_RX[%d]: 0x%02x\n", sl->rx_cnt, *cp);
+			pr_debug("sllin: LIN_RX[%d]: 0x%02x\n", sl->rx_cnt, *cp);
 			sl->rx_buff[sl->rx_cnt++] = *cp++;
 		}
 	}
@@ -440,9 +443,9 @@ static void sllin_receive_buf(struct tty_struct *tty,
 	if (sl->rx_cnt >= sl->rx_expect) {
 		set_bit(SLF_RXEVENT, &sl->flags);
 		wake_up(&sl->kwt_wq);
-		printk(KERN_INFO "sllin_receive_buf count %d, wakeup\n", sl->rx_cnt);
+		pr_debug("sllin: sllin_receive_buf count %d, wakeup\n", sl->rx_cnt);
 	} else {
-		printk(KERN_INFO "sllin_receive_buf count %d, waiting\n", sl->rx_cnt);
+		pr_debug("sllin: sllin_receive_buf count %d, waiting\n", sl->rx_cnt);
 	}
 }
 
@@ -462,7 +465,7 @@ static int sllin_configure_frame_cache(struct sllin *sl, struct can_frame *cf)
 		return -1;
 
 	sce = &sl->linfr_cache[cf->can_id & SLLIN_ID_MASK];
-	printk(KERN_INFO "Setting frame cache with EFF CAN frame. "
+	pr_debug("sllin: Setting frame cache with EFF CAN frame. "
 		"LIN ID = %d\n", cf->can_id & SLLIN_ID_MASK);
 
 	sce->dlc = cf->can_dlc;
@@ -564,7 +567,7 @@ int sllin_send_tx_buff(struct sllin *sl)
 		sl->tx_cnt += res;
 	}
 
-	printk(KERN_INFO "sllin_send_tx_buff sent %d, remains %d\n",
+	pr_debug("sllin: sllin_send_tx_buff sent %d, remains %d\n",
 			sl->tx_cnt, remains);
 
 	return 0;
@@ -629,7 +632,7 @@ int sllin_send_break(struct sllin *sl)
 
 	sl->tx_cnt = SLLIN_BUFF_SYNC;
 
-	printk(KERN_INFO "sllin: Break sent.\n");
+	pr_debug("sllin: Break sent.\n");
 	set_bit(SLF_RXEVENT, &sl->flags);
 	wake_up(&sl->kwt_wq);
 
@@ -691,7 +694,7 @@ int sllin_kwthread(void *ptr)
 	int tx_bytes = 0; /* Used for Network statistics */
 
 
-	printk(KERN_INFO "sllin: sllin_kwthread started.\n");
+	pr_debug("sllin: sllin_kwthread started.\n");
 	sched_setscheduler(current, SCHED_FIFO, &schparam);
 
 	clear_bit(SLF_ERROR, &sl->flags);
@@ -720,15 +723,15 @@ int sllin_kwthread(void *ptr)
 				&& test_bit(SLF_MSGEVENT, &sl->flags)));
 
 		if (test_and_clear_bit(SLF_RXEVENT, &sl->flags)) {
-			printk(KERN_INFO "sllin_kthread RXEVENT \n");
+			pr_debug("sllin: sllin_kthread RXEVENT \n");
 		}
 
 		if (test_and_clear_bit(SLF_TXEVENT, &sl->flags)) {
-			printk(KERN_INFO "sllin_kthread TXEVENT \n");
+			pr_debug("sllin: sllin_kthread TXEVENT \n");
 		}
 
 		if (test_and_clear_bit(SLF_TMOUTEVENT, &sl->flags)) {
-			printk(KERN_INFO "sllin_kthread TMOUTEVENT \n");
+			pr_debug("sllin: sllin_kthread TMOUTEVENT \n");
 			sl->rx_cnt = 0;
 			sl->rx_expect = 0;
 			sl->rx_lim = sl->lin_master ? 0 : SLLIN_BUFF_LEN;
@@ -750,7 +753,7 @@ int sllin_kwthread(void *ptr)
 				/* SFF RTR CAN frame -> LIN header */ 
 				if (cf->can_id & CAN_RTR_FLAG) {
 					spin_lock(&sl->lock);
-					printk(KERN_INFO "%s: RTR SFF CAN frame, ID = %x\n",
+					pr_debug("sllin: %s: RTR SFF CAN frame, ID = %x\n",
 						__FUNCTION__, cf->can_id & SLLIN_ID_MASK);
 
 					/* Is there Slave response in linfr_cache to be sent? */
@@ -758,7 +761,7 @@ int sllin_kwthread(void *ptr)
 						SLLIN_LOC_SLAVE_CACHE) 
 						&& (sl->linfr_cache[cf->can_id & SLLIN_ID_MASK].dlc > 0)) {
 						
-						printk(KERN_INFO "Sending LIN response from linfr_cache\n");
+						pr_debug("sllin: Sending LIN response from linfr_cache\n");
 						lin_data = sl->linfr_cache[cf->can_id & SLLIN_ID_MASK].data;
 						lin_dlc = sl->linfr_cache[cf->can_id & SLLIN_ID_MASK].dlc;
 						if (lin_dlc > SLLIN_DATA_MAX)
@@ -771,7 +774,7 @@ int sllin_kwthread(void *ptr)
 					}
 					spin_unlock(&sl->lock);
 				} else { /* SFF NON-RTR CAN frame -> LIN header + LIN response */
-					printk(KERN_INFO "%s: NON-RTR SFF CAN frame, ID = %x\n",
+					pr_debug("sllin: %s: NON-RTR SFF CAN frame, ID = %x\n",
 						__FUNCTION__, (int)cf->can_id & SLLIN_ID_MASK);
 
 					lin_data = cf->data;
@@ -869,16 +872,16 @@ int sllin_kwthread(void *ptr)
 					continue;
 			
 				hrtimer_cancel(&sl->rx_timer);
-				printk(KERN_INFO "sllin: response received ID %d len %d\n",
+				pr_debug("sllin: response received ID %d len %d\n",
 					sl->rx_buff[SLLIN_BUFF_ID], sl->rx_cnt - SLLIN_BUFF_DATA - 1);
 
 				if (sllin_rx_validate(sl) == -1) {
-					printk("sllin: RX validation failed.\n");
+					pr_debug("sllin: RX validation failed.\n");
 					sllin_report_error(sl, SLLIN_ERR_CHECKSUM);
 					//FIXME tx_stat.err++
 				} else {
 					// send CAN non-RTR frame with data
-					printk(KERN_INFO "sllin: sending NON-RTR CAN"
+					pr_debug("sllin: sending NON-RTR CAN"
 						"frame with LIN payload.");
 					sll_bump(sl); //send packet to the network layer
 				}
@@ -893,7 +896,7 @@ int sllin_kwthread(void *ptr)
 					continue;
 				
 				sll_bump(sl); //send packet to the network layer
-				printk(KERN_INFO "sllin: response sent ID %d len %d\n",
+				pr_debug("sllin: response sent ID %d len %d\n",
 					sl->rx_buff[SLLIN_BUFF_ID], sl->rx_cnt - SLLIN_BUFF_DATA - 1);
 
 				sl->id_to_send = false;
@@ -909,7 +912,7 @@ int sllin_kwthread(void *ptr)
 	}
 
 	hrtimer_cancel(&sl->rx_timer);
-	printk(KERN_INFO "sllin: sllin_kwthread stopped.\n");
+	pr_debug("sllin: sllin_kwthread stopped.\n");
 
 	return 0;
 }
@@ -1174,7 +1177,7 @@ static int __init sllin_init(void)
 		maxdev = 4; /* Sanity */
 
 	printk(banner);
-	printk(KERN_INFO "sllin: %d dynamic interface channels.\n", maxdev);
+	pr_debug("sllin: %d dynamic interface channels.\n", maxdev);
 
 	sllin_devs = kzalloc(sizeof(struct net_device *)*maxdev, GFP_KERNEL);
 	if (!sllin_devs) {
@@ -1190,9 +1193,9 @@ static int __init sllin_init(void)
 	}
 
 #ifdef BREAK_BY_BAUD
-	printk(KERN_INFO "sllin: Break is generated by baud-rate change.");
+	pr_debug("sllin: Break is generated by baud-rate change.");
 #else
-	printk(KERN_INFO "sllin: Break is generated manually with tiny sleep.");
+	pr_debug("sllin: Break is generated manually with tiny sleep.");
 #endif
 
 	return status;
