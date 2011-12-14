@@ -639,7 +639,7 @@ int sllin_send_break(struct sllin *sl)
 	if (retval)
 		return retval;
 
-	//udelay(712);
+	/* udelay(712); */
 	usleep_range_min = (1000000l * SLLIN_SAMPLES_PER_CHAR) / break_baud;
 	usleep_range_max = usleep_range_min + 50;
 	usleep_range(usleep_range_min, usleep_range_max);
@@ -893,6 +893,7 @@ int sllin_kwthread(void *ptr)
 					}
 				}
 
+				/* Be aware, no BREAK here */
 			case SLSTATE_RESPONSE_WAIT_BUS:
 				if (sl->rx_cnt < sl->rx_expect)
 					continue;
@@ -904,12 +905,12 @@ int sllin_kwthread(void *ptr)
 				if (sllin_rx_validate(sl) == -1) {
 					pr_debug("sllin: RX validation failed.\n");
 					sllin_report_error(sl, LIN_ERR_CHECKSUM);
-					//FIXME tx_stat.err++
+					/* FIXME tx_stat.err++ */
 				} else {
-					// send CAN non-RTR frame with data
+					/* Send CAN non-RTR frame with data */
 					pr_debug("sllin: sending NON-RTR CAN"
 						"frame with LIN payload.");
-					sll_bump(sl); //send packet to the network layer
+					sll_bump(sl); /* send packet to the network layer */
 				}
 
 				sl->id_to_send = false;
@@ -921,7 +922,7 @@ int sllin_kwthread(void *ptr)
 				if (sl->rx_cnt < sl->tx_lim)
 					continue;
 
-				sll_bump(sl); //send packet to the network layer
+				sll_bump(sl); /* send packet to the network layer */
 				pr_debug("sllin: response sent ID %d len %d\n",
 					sl->rx_buff[SLLIN_BUFF_ID], sl->rx_cnt - SLLIN_BUFF_DATA - 1);
 
