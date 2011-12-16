@@ -879,6 +879,8 @@ int sllin_kwthread(void *ptr)
 
 					lin_buff = (sl->lin_master) ? sl->tx_buff : sl->rx_buff;
 					if (cf->can_id == (lin_buff[SLLIN_BUFF_ID] & LIN_ID_MASK)) {
+						hrtimer_cancel(&sl->rx_timer);
+						pr_debug("sllin: received LIN response in a CAN frame.\n");
 						if (sllin_setup_msg(sl, SLLIN_STPMSG_RESPONLY,
 							cf->can_id & LIN_ID_MASK,
 							cf->data, cf->can_dlc) != -1) {
