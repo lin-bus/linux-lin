@@ -831,6 +831,9 @@ int sllin_kwthread(void *ptr)
 				clear_bit(SLF_MSGEVENT, &sl->flags);
 				kfree_skb(sl->tx_req_skb);
 				netif_wake_queue(sl->dev);
+				hrtimer_start(&sl->rx_timer,
+					ktime_add(ktime_get(), sl->rx_timer_timeout),
+					HRTIMER_MODE_ABS);
 				break;
 
 			case SLSTATE_BREAK_SENT:
@@ -846,6 +849,7 @@ int sllin_kwthread(void *ptr)
 				break;
 
 			case SLSTATE_ID_SENT:
+				hrtimer_cancel(&sl->rx_timer);
 				sl->id_to_send = false;
 				if (sl->data_to_send) {
 					sllin_send_tx_buff(sl);
