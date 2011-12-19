@@ -425,7 +425,7 @@ static void sllin_receive_buf(struct tty_struct *tty,
 {
 	struct sllin *sl = (struct sllin *) tty->disc_data;
 
-	pr_debug("sllin: sllin_receive_buf invoked\n");
+	pr_debug("sllin: sllin_receive_buf invoked, count = %u\n", count);
 
 	if (!sl || sl->magic != SLLIN_MAGIC || !netif_running(sl->dev))
 		return;
@@ -443,6 +443,10 @@ static void sllin_receive_buf(struct tty_struct *tty,
 				if (sl->lin_master == true) {
 					wake_up(&sl->kwt_wq);
 					return;
+				} else {
+					sl->rx_cnt = 0;
+					sl->rx_expect = SLLIN_BUFF_ID + 1;
+					return;
 				}
 
 				cp++;
@@ -452,7 +456,7 @@ static void sllin_receive_buf(struct tty_struct *tty,
 
 		if (sl->rx_cnt < SLLIN_BUFF_LEN) {
 #ifndef BREAK_BY_BAUD
-			/* We didn't receive Break character */
+			/* We didn't receive Break character -- fake it! */
 			if ((sl->rx_cnt == SLLIN_BUFF_BREAK) && (*cp == 0x55)) {
 				sl->rx_buff[sl->rx_cnt++] = 0x00;
 			}
@@ -462,12 +466,40 @@ static void sllin_receive_buf(struct tty_struct *tty,
 		}
 	}
 
-	if (sl->rx_cnt >= sl->rx_expect) {
-		set_bit(SLF_RXEVENT, &sl->flags);
-		wake_up(&sl->kwt_wq);
-		pr_debug("sllin: sllin_receive_buf count %d, wakeup\n",	sl->rx_cnt);
-	} else {
-		pr_debug("sllin: sllin_receive_buf count %d, waiting\n", sl->rx_cnt);
+	if (sl->lin_master == true) {
+		if (sl->rx_cnt >= sl->rx_expect) {
+			set_bit(SLF_RXEVENT, &sl->flags);
+			wake_up(&sl->kwt_wq);
+			pr_debug("sllin: sllin_receive_buf count %d, wakeup\n",	sl->rx_cnt);
+		} else {
+			pr_debug("sllin: sllin_receive_buf count %d, waiting\n", sl->rx_cnt);
+		}
+	} else { /* LIN slave */
+		int lin_id;
+		struct sllin_conf_entry *sce;
+
+	//	sl->rx_buff[sl->rx_cnt] = *cp++;
+	//	if (sl->rx_cnt == (SLLIN_BUFF_ID + 1)) { /* Received whole header */
+	//		lin_id = sl->rx_buff[sl->rx_cnt] & LIN_ID_MASK;
+	//		sce = &sl->linfr_cache[lin_id];
+
+	//		if (sce->frame_fl & LIN_LOC_SLAVE_CACHE)
+	//			sl->rx_expect += sce->dlc;
+	//		else
+	//			sl->rx_expect += 2;//SLLIN_DATA_MAX;
+
+	//		/* Send RTR frame here */
+	//	}
+
+		if (sl->rx_cnt >= sl->rx_expect && sl->rx_cnt > SLLIN_BUFF_DATA) {
+			sll_bump(sl);
+			pr_debug("sllin: Received LIN header & LIN response. "
+				"rx_cnt = %u, rx_expect = %u\n", sl->rx_cnt,
+				sl->rx_expect);
+			sl->rx_cnt = 0;
+		}
+
+		sl->rx_cnt++;
 	}
 }
 
