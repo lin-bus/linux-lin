@@ -91,7 +91,7 @@ MODULE_PARM_DESC(maxdev, "Maximum number of sllin interfaces");
 #define SLLIN_BUFF_DATA	 	3
 
 #define SLLIN_SAMPLES_PER_CHAR	10
-#define SLLIN_CHARS_TO_TIMEOUT	12
+#define SLLIN_CHARS_TO_TIMEOUT	24
 
 enum slstate {
 	SLSTATE_IDLE = 0,
@@ -420,15 +420,21 @@ static void sllin_receive_buf(struct tty_struct *tty,
 	/* Read the characters out of the buffer */
 	while (count--) {
 		if (fp && *fp++) {
-			if (!test_and_set_bit(SLF_ERROR, &sl->flags))
-				sl->dev->stats.rx_errors++;
+			if (sl->rx_cnt > SLLIN_BUFF_BREAK) {
+				set_bit(SLF_ERROR, &sl->flags);
 
-			pr_debug("sllin: sllin_receive_buf char 0x%02x ignored "
-				"due marker 0x%02x, flags 0x%lx\n",
-				*cp, *(fp-1), sl->flags);
+				pr_debug("sllin: sllin_receive_buf char 0x%02x ignored "
+					"due marker 0x%02x, flags 0x%lx\n",
+					*cp, *(fp-1), sl->flags);
 
-			cp++;
-			continue;
+				if (sl->lin_master == true) {
+					wake_up(&sl->kwt_wq);
+					return;
+				}
+
+				cp++;
+				continue;
+			}
 		}
 
 		if (sl->rx_cnt < SLLIN_BUFF_LEN) {
@@ -471,6 +477,10 @@ void sllin_report_error(struct sllin *sl, int err)
 
 		case LIN_ERR_RX_TIMEOUT:		
 			sl->dev->stats.rx_errors++;
+			break;
+
+		case LIN_ERR_FRAMING:
+			sl->dev->stats.rx_frame_errors++;
 			break;
 	}
 
@@ -568,6 +578,16 @@ int sllin_setup_msg(struct sllin *sl, int mode, int id,
 	return 0;
 }
 
+static void sllin_reset_buffs(struct sllin *sl)
+{
+	sl->rx_cnt = 0;
+	sl->rx_expect = 0;
+	sl->rx_lim = sl->lin_master ? 0 : SLLIN_BUFF_LEN;
+	sl->tx_cnt = 0;
+	sl->tx_lim = 0;
+	sl->id_to_send = false;
+	sl->data_to_send = false;
+}
 
 int sllin_send_tx_buff(struct sllin *sl)
 {
@@ -759,6 +779,7 @@ int sllin_kwthread(void *ptr)
 			test_bit(SLF_RXEVENT, &sl->flags) ||
 			test_bit(SLF_TXEVENT, &sl->flags) ||
 			test_bit(SLF_TMOUTEVENT, &sl->flags) ||
+			test_bit(SLF_ERROR, &sl->flags) ||
 			(((sl->lin_state == SLSTATE_IDLE) ||
 				(sl->lin_state == SLSTATE_RESPONSE_WAIT))
 				&& test_bit(SLF_MSGEVENT, &sl->flags)));
@@ -767,19 +788,30 @@ int sllin_kwthread(void *ptr)
 			pr_debug("sllin: sllin_kthread RXEVENT\n");
 		}
 
+		if (test_and_clear_bit(SLF_ERROR, &sl->flags)) {
+			unsigned long usleep_range_min;
+			unsigned long usleep_range_max;
+			hrtimer_cancel(&sl->rx_timer);
+			pr_debug("sllin: sllin_kthread ERROR\n");
+
+			if (sl->lin_state != SLSTATE_IDLE)
+				sllin_report_error(sl, LIN_ERR_FRAMING);
+
+			usleep_range_min = (1000000l * SLLIN_SAMPLES_PER_CHAR * 10) /
+						sl->lin_baud;
+			usleep_range_max = usleep_range_min + 50;
+			usleep_range(usleep_range_min, usleep_range_max);
+			sllin_reset_buffs(sl);
+			sl->lin_state = SLSTATE_IDLE;
+		}
+
 		if (test_and_clear_bit(SLF_TXEVENT, &sl->flags)) {
 			pr_debug("sllin: sllin_kthread TXEVENT\n");
 		}
 
 		if (test_and_clear_bit(SLF_TMOUTEVENT, &sl->flags)) {
 			pr_debug("sllin: sllin_kthread TMOUTEVENT\n");
-			sl->rx_cnt = 0;
-			sl->rx_expect = 0;
-			sl->rx_lim = sl->lin_master ? 0 : SLLIN_BUFF_LEN;
-			sl->tx_cnt = 0;
-			sl->tx_lim = 0;
-			sl->id_to_send = false;
-			sl->data_to_send = false;
+			sllin_reset_buffs(sl);
 
 			sl->lin_state = SLSTATE_IDLE;
 		}
@@ -942,6 +974,7 @@ int sllin_kwthread(void *ptr)
 				if (sl->rx_cnt < sl->tx_lim)
 					continue;
 
+				hrtimer_cancel(&sl->rx_timer);
 				sll_bump(sl); /* send packet to the network layer */
 				pr_debug("sllin: response sent ID %d len %d\n",
 					sl->rx_buff[SLLIN_BUFF_ID], sl->rx_cnt - SLLIN_BUFF_DATA - 1);
@@ -1085,13 +1118,7 @@ static int sllin_open(struct tty_struct *tty)
 		/* Perform the low-level SLLIN initialization. */
 		sl->lin_master = true;
 
-		sl->rx_cnt = 0;
-		sl->rx_expect = 0;
-		sl->rx_lim = sl->lin_master ? 0 : SLLIN_BUFF_LEN;
-		sl->tx_cnt = 0;
-		sl->tx_lim = 0;
-		sl->id_to_send = false;
-		sl->data_to_send = false;
+		sllin_reset_buffs(sl);
 
 		sl->lin_baud  = 19200;
 

@@ -18,6 +18,6 @@
 
 #define LIN_ERR_RX_TIMEOUT	(1 << (LIN_CANFR_FLAGS_OFFS + 7))
 #define LIN_ERR_CHECKSUM	(1 << (LIN_CANFR_FLAGS_OFFS + 8))
-//#define LIN_ERR_FRAMING	(1 << (LIN_CANFR_FLAGS_OFFS + 9))
+#define LIN_ERR_FRAMING		(1 << (LIN_CANFR_FLAGS_OFFS + 9))
 
 #endif /* _LIN_BUS_H_ */
