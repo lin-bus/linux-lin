@@ -146,6 +146,8 @@ struct sllin {
 	char  			id_to_send;	/* there is ID to be sent */
 	char                    data_to_send;   /* there are data to be sent */
 	char			resp_len_known; /* Length of the response is known */
+	char 			header_received;/* In Slave mode, set when header was already
+						   received */
 
 	unsigned long		flags;		/* Flag values/ mode etc     */
 #define SLF_INUSE		0		/* Channel in use            */
@@ -261,6 +263,12 @@ static void sll_bump(struct sllin *sl)
 	sllin_send_canfr(sl, sl->rx_buff[SLLIN_BUFF_ID] & LIN_ID_MASK,
 		sl->rx_buff + SLLIN_BUFF_DATA,
 		sl->rx_cnt - SLLIN_BUFF_DATA - 1); /* without checksum */
+}
+
+static void sll_send_rtr(struct sllin *sl)
+{
+	sllin_send_canfr(sl, (sl->rx_buff[SLLIN_BUFF_ID] & LIN_ID_MASK) |
+		CAN_RTR_FLAG, NULL, 0);
 }
 
 /*
@@ -446,6 +454,7 @@ static void sllin_receive_buf(struct tty_struct *tty,
 				} else {
 					sl->rx_cnt = 0;
 					sl->rx_expect = SLLIN_BUFF_ID + 1;
+					sl->header_received = false;
 					return;
 				}
 
@@ -478,18 +487,20 @@ static void sllin_receive_buf(struct tty_struct *tty,
 		int lin_id;
 		struct sllin_conf_entry *sce;
 
-	//	sl->rx_buff[sl->rx_cnt] = *cp++;
-	//	if (sl->rx_cnt == (SLLIN_BUFF_ID + 1)) { /* Received whole header */
-	//		lin_id = sl->rx_buff[sl->rx_cnt] & LIN_ID_MASK;
-	//		sce = &sl->linfr_cache[lin_id];
+		sl->rx_buff[sl->rx_cnt] = *cp++;
+		if ((sl->rx_cnt >= (SLLIN_BUFF_ID + 1)) &&
+			(sl->header_received == false)) { /* Received whole header */
+			lin_id = sl->rx_buff[sl->rx_cnt] & LIN_ID_MASK;
+			sce = &sl->linfr_cache[lin_id];
 
-	//		if (sce->frame_fl & LIN_LOC_SLAVE_CACHE)
-	//			sl->rx_expect += sce->dlc;
-	//		else
-	//			sl->rx_expect += 2;//SLLIN_DATA_MAX;
+			if (sce->frame_fl & LIN_LOC_SLAVE_CACHE)
+				sl->rx_expect += sce->dlc;
+			else
+				sl->rx_expect += 2;//SLLIN_DATA_MAX;
 
-	//		/* Send RTR frame here */
-	//	}
+			sl->header_received = true;
+			sll_send_rtr(sl);
+		}
 
 		if (sl->rx_cnt >= sl->rx_expect && sl->rx_cnt > SLLIN_BUFF_DATA) {
 			sll_bump(sl);
