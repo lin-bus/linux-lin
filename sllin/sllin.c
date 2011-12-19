@@ -80,6 +80,14 @@ MODULE_AUTHOR("Pavel Pisa <pisa@cmp.felk.cvut.cz>");
 #define SLLIN_MAGIC 		0x53CA
 /* #define BREAK_BY_BAUD */
 
+static int master = true;
+static int baudrate = 0; /* Use LIN_DEFAULT_BAUDRATE when not set */
+
+module_param(master, bool, 0);
+MODULE_PARM_DESC(master, "LIN interface is Master device");
+module_param(baudrate, int, 0);
+MODULE_PARM_DESC(baudrate, "Baudrate of LIN interface");
+
 static int maxdev = 10;		/* MAX number of SLLIN channels;
 				   This can be overridden with
 				   insmod sllin.ko maxdev=nnn	*/
@@ -1121,11 +1129,12 @@ static int sllin_open(struct tty_struct *tty)
 
 	if (!test_bit(SLF_INUSE, &sl->flags)) {
 		/* Perform the low-level SLLIN initialization. */
-		sl->lin_master = true;
+		sl->lin_master = master;
 
 		sllin_reset_buffs(sl);
 
-		sl->lin_baud  = 19200;
+		sl->lin_baud = (baudrate == 0) ? LIN_DEFAULT_BAUDRATE : baudrate;
+		pr_debug("sllin: Baudrate set to %u\n", sl->lin_baud);
 
 		sl->lin_state = SLSTATE_IDLE;
 

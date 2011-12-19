@@ -5,6 +5,8 @@
 #define LIN_ID_MAX		LIN_ID_MASK
 #define LIN_CTRL_FRAME 		CAN_EFF_FLAG
 
+#define LIN_DEFAULT_BAUDRATE	19200
+
 #define LIN_CANFR_FLAGS_OFFS	6 /* Lower 6 bits in can_id correspond to LIN ID */
 /* Save configuration for particular LIN ID */
 #define LIN_ID_CONF		(1 <<  LIN_CANFR_FLAGS_OFFS)
