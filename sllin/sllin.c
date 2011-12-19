@@ -188,10 +188,16 @@ static int sltty_change_speed(struct tty_struct *tty, unsigned speed)
 	mutex_lock(&tty->termios_mutex);
 
 	old_termios = *(tty->termios);
-	cflag = tty->termios->c_cflag;
+
+	cflag = CS8 | CREAD | CLOCAL | HUPCL;
 	cflag &= ~(CBAUD | CIBAUD);
 	cflag |= BOTHER;
 	tty->termios->c_cflag = cflag;
+	tty->termios->c_oflag = 0;
+	tty->termios->c_lflag = 0;
+
+	/* Enable interrupt when UART-Break or Framing error received */
+	tty->termios->c_iflag = BRKINT | INPCK;
 
 	tty_encode_baud_rate(tty, speed, speed);
 
@@ -202,7 +208,6 @@ static int sltty_change_speed(struct tty_struct *tty, unsigned speed)
 
 	return 0;
 }
-
 
 /* Send one can_frame to the network layer */
 static void sllin_send_canfr(struct sllin *sl, canid_t id, char *data, int len)
@@ -417,9 +422,11 @@ static void sllin_receive_buf(struct tty_struct *tty,
 		if (fp && *fp++) {
 			if (!test_and_set_bit(SLF_ERROR, &sl->flags))
 				sl->dev->stats.rx_errors++;
+
 			pr_debug("sllin: sllin_receive_buf char 0x%02x ignored "
 				"due marker 0x%02x, flags 0x%lx\n",
 				*cp, *(fp-1), sl->flags);
+
 			cp++;
 			continue;
 		}
