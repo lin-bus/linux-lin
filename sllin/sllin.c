@@ -1,4 +1,4 @@
-/*
+/* 
  * sllin.c - serial line LIN interface driver (using tty line discipline)
  *
  * This file is derived from drivers/net/can/slcan.c
@@ -32,8 +32,13 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
  * DAMAGE.
  *
- * Send feedback to <socketcan-users@lists.berlios.de>
- *
+ * Idea:       Oliver Hartkopp <oliver.hartkopp@volkswagen.de> 
+ * Copyright:  (c) 2011 Czech Technical University in Prague
+ *             (c) 2011 Volkswagen Group Research
+ * Authors:    Pavel Pisa <pisa@cmp.felk.cvut.cz>
+ *             Rostislav Lisovy <lisovy@kormus.cz>
+ *             Michal Sojka <sojkam1@fel.cvut.cz>
+ * Funded by:  Volkswagen Group Research
  */
 
 #define DEBUG 		1 /* Enables pr_debug() printouts */
@@ -70,7 +75,7 @@ static __initdata const char banner[] =
 MODULE_ALIAS_LDISC(N_SLLIN);
 MODULE_DESCRIPTION("serial line LIN interface");
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("");
+MODULE_AUTHOR("Pavel Pisa <pisa@cmp.felk.cvut.cz>");
 
 #define SLLIN_MAGIC 		0x53CA
 /* #define BREAK_BY_BAUD */
