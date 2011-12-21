@@ -148,6 +148,8 @@ struct sllin {
 	char			resp_len_known; /* Length of the response is known */
 	char 			header_received;/* In Slave mode, set when header was already
 						   received */
+	char			rx_len_unknown; /* We are not sure how much data will be sent to us --
+						   we just guess the length */
 
 	unsigned long		flags;		/* Flag values/ mode etc     */
 #define SLF_INUSE		0		/* Channel in use            */
@@ -429,6 +431,12 @@ static void sll_setup(struct net_device *dev)
 /******************************************
   Routines looking at TTY side.
  ******************************************/
+#define SLL_RESPONSE_RECEIVED		((sl->header_received == true) && \
+					 ((sl->rx_cnt >= sl->rx_expect) || \
+					 ((sl->rx_len_unknown == true) && (count == 0))))
+
+#define SLL_HEADER_RECEIVED		((sl->header_received == false) && \
+					 (sl->rx_cnt >= (SLLIN_BUFF_ID + 1)))
 
 static void sllin_receive_buf(struct tty_struct *tty,
 			      const unsigned char *cp, char *fp, int count)
@@ -453,67 +461,68 @@ static void sllin_receive_buf(struct tty_struct *tty,
 			} else { /* Received Break */
 				sl->rx_cnt = 0;
 				sl->rx_expect = SLLIN_BUFF_ID + 1;
+				sl->rx_len_unknown = false; /* We do know exact length of the header */
 				sl->header_received = false;
-				return;
 			}
 		}
 
-		if (sl->rx_cnt < SLLIN_BUFF_LEN) {
 #ifndef BREAK_BY_BAUD
-			/* We didn't receive Break character -- fake it! */
-			if ((sl->rx_cnt == SLLIN_BUFF_BREAK) && (*cp == 0x55)) {
-				pr_debug("sllin: LIN_RX[%d]: 0x00\n", sl->rx_cnt);
-				sl->rx_buff[sl->rx_cnt++] = 0x00;
-			}
+		/* We didn't receive Break character -- fake it! */
+		if ((sl->rx_cnt == SLLIN_BUFF_BREAK) && (*cp == 0x55)) {
+			pr_debug("sllin: LIN_RX[%d]: 0x00\n", sl->rx_cnt);
+			sl->rx_buff[sl->rx_cnt++] = 0x00;
+		}
 #endif
+		if (sl->rx_cnt < SLLIN_BUFF_LEN) {
 			pr_debug("sllin: LIN_RX[%d]: 0x%02x\n", sl->rx_cnt, *cp);
 			sl->rx_buff[sl->rx_cnt++] = *cp++;
 		}
-	}
 
-	if (sl->lin_master == true) {
-		if (sl->rx_cnt >= sl->rx_expect) { /* Probably whole frame was received */
-			set_bit(SLF_RXEVENT, &sl->flags);
-			wake_up(&sl->kwt_wq);
-			pr_debug("sllin: sllin_receive_buf count %d, wakeup\n",	sl->rx_cnt);
-		} else {
-			pr_debug("sllin: sllin_receive_buf count %d, waiting\n", sl->rx_cnt);
-		}
-	} else { /* LIN slave */
-		int lin_id;
-		struct sllin_conf_entry *sce;
+		if (sl->lin_master == true) {
+			if (SLL_RESPONSE_RECEIVED) {
+				set_bit(SLF_RXEVENT, &sl->flags);
+				wake_up(&sl->kwt_wq);
+				pr_debug("sllin: sllin_receive_buf count %d, wakeup\n",	sl->rx_cnt);
+			} else {
+				pr_debug("sllin: sllin_receive_buf count %d, waiting\n", sl->rx_cnt);
+			}
+		} else { /* LIN slave */
+			int lin_id;
+			struct sllin_conf_entry *sce;
 
-		pr_debug("sllin: rx_cnt = %u; header_received = %u\n",
-			sl->rx_cnt, sl->header_received);
+			pr_debug("sllin: rx_cnt = %u; header_received = %u\n",
+					sl->rx_cnt, sl->header_received);
 
-		/* Whole header was received */
-		if ((sl->rx_cnt >= (SLLIN_BUFF_ID + 1)) &&
-			(sl->header_received == false))
-		{
-			lin_id = sl->rx_buff[SLLIN_BUFF_ID] & LIN_ID_MASK;
-			sce = &sl->linfr_cache[lin_id];
+			if (SLL_HEADER_RECEIVED) {
+				lin_id = sl->rx_buff[SLLIN_BUFF_ID] & LIN_ID_MASK;
+				sce = &sl->linfr_cache[lin_id];
 
-			/* Is the length of data set in frame cache? */
-			if (sce->frame_fl & LIN_LOC_SLAVE_CACHE)
-				sl->rx_expect += sce->dlc;
-			else
-				sl->rx_expect += 2; /* 1 data byte + checksum */
+				/* Is the length of data set in frame cache? */
+				if (sce->frame_fl & LIN_LOC_SLAVE_CACHE) {
+					sl->rx_expect += sce->dlc;
+					sl->rx_len_unknown = false;
+				} else {
+					sl->rx_expect += SLLIN_DATA_MAX + 1; /* + checksum */
+					sl->rx_len_unknown = true;
+				}
 
-			sl->header_received = true;
-			sll_send_rtr(sl);
-		}
+				sl->header_received = true;
+				sll_send_rtr(sl);
+				continue;
+			}
 
-		/* Probably whole frame was received */
-		if ((sl->rx_cnt >= sl->rx_expect) && (sl->rx_cnt > SLLIN_BUFF_DATA)) {
-			sll_bump(sl);
-			pr_debug("sllin: Received LIN header & LIN response. "
-				"rx_cnt = %u, rx_expect = %u\n", sl->rx_cnt,
-				sl->rx_expect);
+			if (SLL_RESPONSE_RECEIVED) {
+				sll_bump(sl);
+				pr_debug("sllin: Received LIN header & LIN response. "
+						"rx_cnt = %u, rx_expect = %u\n", sl->rx_cnt,
+						sl->rx_expect);
 
-			/* Prepare for reception of new header */
-			sl->rx_cnt = 0;
-			sl->rx_expect = SLLIN_BUFF_ID + 1;
-			sl->header_received = false;
+				/* Prepare for reception of new header */
+				sl->rx_cnt = 0;
+				sl->rx_expect = SLLIN_BUFF_ID + 1;
+				sl->rx_len_unknown = false; /* We do know exact length of the header */
+				sl->header_received = false;
+			}
 		}
 	}
 }
