@@ -467,6 +467,7 @@ static void sllin_receive_buf(struct tty_struct *tty,
 #ifndef BREAK_BY_BAUD
 			/* We didn't receive Break character -- fake it! */
 			if ((sl->rx_cnt == SLLIN_BUFF_BREAK) && (*cp == 0x55)) {
+				pr_debug("sllin: LIN_RX[%d]: 0x00\n", sl->rx_cnt);
 				sl->rx_buff[sl->rx_cnt++] = 0x00;
 			}
 #endif
@@ -476,7 +477,7 @@ static void sllin_receive_buf(struct tty_struct *tty,
 	}
 
 	if (sl->lin_master == true) {
-		if (sl->rx_cnt >= sl->rx_expect) {
+		if (sl->rx_cnt >= sl->rx_expect) { /* Probably whole frame was received */
 			set_bit(SLF_RXEVENT, &sl->flags);
 			wake_up(&sl->kwt_wq);
 			pr_debug("sllin: sllin_receive_buf count %d, wakeup\n",	sl->rx_cnt);
@@ -487,30 +488,33 @@ static void sllin_receive_buf(struct tty_struct *tty,
 		int lin_id;
 		struct sllin_conf_entry *sce;
 
-		sl->rx_buff[sl->rx_cnt] = *cp++;
+		/* Received whole header */
 		if ((sl->rx_cnt >= (SLLIN_BUFF_ID + 1)) &&
-			(sl->header_received == false)) { /* Received whole header */
-			lin_id = sl->rx_buff[sl->rx_cnt] & LIN_ID_MASK;
+			(sl->header_received == false))
+		{
+			lin_id = sl->rx_buff[SLLIN_BUFF_ID] & LIN_ID_MASK;
 			sce = &sl->linfr_cache[lin_id];
 
+			/* Is the length of data set in frame cache? */
 			if (sce->frame_fl & LIN_LOC_SLAVE_CACHE)
 				sl->rx_expect += sce->dlc;
 			else
-				sl->rx_expect += 2;//SLLIN_DATA_MAX;
+				sl->rx_expect += 2; /* 1 data byte + checksum */
 
 			sl->header_received = true;
 			sll_send_rtr(sl);
 		}
 
-		if (sl->rx_cnt >= sl->rx_expect && sl->rx_cnt > SLLIN_BUFF_DATA) {
+		/* Probably whole frame was received */
+		if ((sl->rx_cnt >= sl->rx_expect) && (sl->rx_cnt > SLLIN_BUFF_DATA)) {
 			sll_bump(sl);
 			pr_debug("sllin: Received LIN header & LIN response. "
 				"rx_cnt = %u, rx_expect = %u\n", sl->rx_cnt,
 				sl->rx_expect);
 			sl->rx_cnt = 0;
+			sl->rx_expect = SLLIN_BUFF_ID + 1;
+			sl->header_received = false;
 		}
-
-		sl->rx_cnt++;
 	}
 }
 
@@ -531,7 +535,7 @@ void sllin_report_error(struct sllin *sl, int err)
 			sl->dev->stats.rx_crc_errors++;
 			break;
 
-		case LIN_ERR_RX_TIMEOUT:		
+		case LIN_ERR_RX_TIMEOUT:
 			sl->dev->stats.rx_errors++;
 			break;
 
@@ -1173,6 +1177,12 @@ static int sllin_open(struct tty_struct *tty)
 	if (!test_bit(SLF_INUSE, &sl->flags)) {
 		/* Perform the low-level SLLIN initialization. */
 		sl->lin_master = master;
+#ifdef DEBUG
+		if (master)
+			pr_debug("sllin: Configured as MASTER\n");
+		else
+			pr_debug("sllin: Configured as SLAVE\n");
+#endif
 
 		sllin_reset_buffs(sl);
 
