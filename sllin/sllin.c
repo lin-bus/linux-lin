@@ -432,7 +432,6 @@ static void sllin_receive_buf(struct tty_struct *tty,
 			      const unsigned char *cp, char *fp, int count)
 {
 	struct sllin *sl = (struct sllin *) tty->disc_data;
-
 	pr_debug("sllin: sllin_receive_buf invoked, count = %u\n", count);
 
 	if (!sl || sl->magic != SLLIN_MAGIC || !netif_running(sl->dev))
@@ -441,25 +440,19 @@ static void sllin_receive_buf(struct tty_struct *tty,
 	/* Read the characters out of the buffer */
 	while (count--) {
 		if (fp && *fp++) {
-			if (sl->rx_cnt > SLLIN_BUFF_BREAK) {
+			pr_debug("sllin: sllin_receive_buf char 0x%02x ignored "
+				"due marker 0x%02x, flags 0x%lx\n",
+				*cp, *(fp-1), sl->flags);
+
+			if (sl->lin_master == true) { /* Report error */
 				set_bit(SLF_ERROR, &sl->flags);
-
-				pr_debug("sllin: sllin_receive_buf char 0x%02x ignored "
-					"due marker 0x%02x, flags 0x%lx\n",
-					*cp, *(fp-1), sl->flags);
-
-				if (sl->lin_master == true) {
-					wake_up(&sl->kwt_wq);
-					return;
-				} else {
-					sl->rx_cnt = 0;
-					sl->rx_expect = SLLIN_BUFF_ID + 1;
-					sl->header_received = false;
-					return;
-				}
-
-				cp++;
-				continue;
+				wake_up(&sl->kwt_wq);
+				return;
+			} else { /* Received Break */
+				sl->rx_cnt = 0;
+				sl->rx_expect = SLLIN_BUFF_ID + 1;
+				sl->header_received = false;
+				return;
 			}
 		}
 
@@ -488,7 +481,10 @@ static void sllin_receive_buf(struct tty_struct *tty,
 		int lin_id;
 		struct sllin_conf_entry *sce;
 
-		/* Received whole header */
+		pr_debug("sllin: rx_cnt = %u; header_received = %u\n",
+			sl->rx_cnt, sl->header_received);
+
+		/* Whole header was received */
 		if ((sl->rx_cnt >= (SLLIN_BUFF_ID + 1)) &&
 			(sl->header_received == false))
 		{
@@ -511,6 +507,8 @@ static void sllin_receive_buf(struct tty_struct *tty,
 			pr_debug("sllin: Received LIN header & LIN response. "
 				"rx_cnt = %u, rx_expect = %u\n", sl->rx_cnt,
 				sl->rx_expect);
+
+			/* Prepare for reception of new header */
 			sl->rx_cnt = 0;
 			sl->rx_expect = SLLIN_BUFF_ID + 1;
 			sl->header_received = false;
