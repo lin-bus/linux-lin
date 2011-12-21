@@ -260,9 +260,11 @@ static void sllin_send_canfr(struct sllin *sl, canid_t id, char *data, int len)
  */
 static void sll_bump(struct sllin *sl)
 {
+	int len = sl->rx_cnt - SLLIN_BUFF_DATA - 1; /* without checksum */
+	len = (len < 0) ? 0 : len;
+
 	sllin_send_canfr(sl, sl->rx_buff[SLLIN_BUFF_ID] & LIN_ID_MASK,
-		sl->rx_buff + SLLIN_BUFF_DATA,
-		sl->rx_cnt - SLLIN_BUFF_DATA - 1); /* without checksum */
+		sl->rx_buff + SLLIN_BUFF_DATA, len);
 }
 
 static void sll_send_rtr(struct sllin *sl)
