@@ -1,7 +1,7 @@
 Intro
 =====
-Sllin is TTY discipline enabling you to create LIN Master out of
-your computer.
+Sllin is TTY discipline enabling you to create LIN Master (and partially
+LIN Slave) out of your computer.
 Hardware needed is Hardware UART embedded into the computer + simple
 voltage level LIN converter.
 
@@ -9,7 +9,7 @@ voltage level LIN converter.
 Compilation
 ===========
 To successfully compile sllin, it is necessary to have source code
-to Linux kernel actually running on the computer.
+of Linux kernel actually running on the computer.
 
 To compile, run
 $ make
@@ -72,10 +72,31 @@ frames into it.
   same data as this particular CAN frame.
 
 
+Module parameters
+=================
+* maxdev
+   -- Optional
+   -- Possible values: unsigned int
+   -- Maximum number of sllin interfaces.
+      When not set, maxdev = 4.
+      When maxdev < 4, maxdev = 4.
+
+* master
+   -- Optional
+   -- Possible values: 0 or 1
+   -- Sets if LIN interface will be in Master mode (1 = Master, 0 = Slave).
+      When not set, master = 1.
+
+* baudrate
+   -- Optional
+   -- Possible values: unsigned int
+   -- Baudrate used by LIN interface on LIN bus.
+      When not set, baudrate = LIN_DEFAULT_BAUDRATE (19200).
+
 
 Examples
 ========
-# Some outputs might be modified for more comfortable reading
+# Some outputs might be slightly modified for more comfortable reading
 
 $ ls sllin.c
 sllin.c
@@ -163,4 +184,32 @@ $ cangen sllin0 -I 7 -n 1 -L 2 -D f00f
   sllin0    7  [2] F0 0F
   sllin0    7  [2] F0 0F
 
+
+# ----- Semi-slave mode -----
+$ insmod ./sllin.ko master=0
+
+$ sudo slcan_attach -w /dev/ttyS0
+attached tty /dev/ttyS0 to netdevice sllin0
+Press any key to detach /dev/ttyS0 ...
+
+# run in another terminal
+$ sudo ip link set sllin0 up
+
+$ candump -t d sllin0
+ (000.000000)  sllin0    2  [0] remote request
+ (001.003734)  sllin0    1  [0] remote request
+ (000.000017)  sllin0    1  [2] 08 80
+ (000.996027)  sllin0    2  [0] remote request
+ (001.003958)  sllin0    1  [0] remote request
+ (000.000017)  sllin0    1  [2] 08 80
+ (000.996049)  sllin0    2  [0] remote request
+ (001.003930)  sllin0    1  [0] remote request
+ (000.000016)  sllin0    1  [2] 08 80
+ (000.996053)  sllin0    2  [0] remote request
+ (001.003945)  sllin0    1  [0] remote request
+ (000.000017)  sllin0    1  [2] 08 80
+
+# There is one LIN header without response on the bus (= only RTR can frame)
+# and another LIN header followed by a response (= RTR + non-RTR CAN frame
+# with the same ID)
 
