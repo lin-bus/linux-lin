@@ -30,6 +30,10 @@ $ sudo slcan_attach -w /dev/ttyS0
 attached tty /dev/ttyS0 to netdevice sllin0
 Press any key to detach /dev/ttyS0 ...
 
+#It is also possible to use ldattach
+#$ sudo ldattach 25 /dev/ttyS0
+#(To unattach, kill "ldattach")
+
 # Run from another terminal
 $ dmesg
 [157600.564071] sllin: sllin_kwthread stopped.
@@ -46,8 +50,7 @@ $ ip link show dev sllin0
 
 $ sudo ip link set sllin0 up
 
-$ sudo ip link set sllin0 up
-lisovros@pc-lisovy:~/src/lin/pcan_lin/sllin$ ip link show dev sllin0
+$ ip link show dev sllin0
 11: sllin0: <NOARP,UP,LOWER_UP> mtu 16 qdisc pfifo_fast state UNKNOWN qlen 10
     link/can
 
@@ -185,7 +188,7 @@ $ cangen sllin0 -I 7 -n 1 -L 2 -D f00f
   sllin0    7  [2] F0 0F
 
 
-# ----- Semi-slave mode -----
+# ----- Slave mode -----
 $ insmod ./sllin.ko master=0
 
 $ sudo slcan_attach -w /dev/ttyS0
@@ -209,7 +212,7 @@ $ candump -t d sllin0
  (001.003945)  sllin0    1  [0] remote request
  (000.000017)  sllin0    1  [2] 08 80
 
-# There is one LIN header without response on the bus (= only RTR can frame)
+# There is one LIN header without response on the bus (= only RTR CAN frame)
 # and another LIN header followed by a response (= RTR + non-RTR CAN frame
 # with the same ID)
 
