@@ -1,4 +1,4 @@
-/* 
+/*
  * sllin.c - serial line LIN interface driver (using tty line discipline)
  *
  * This file is derived from drivers/net/can/slcan.c
@@ -32,7 +32,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
  * DAMAGE.
  *
- * Idea:       Oliver Hartkopp <oliver.hartkopp@volkswagen.de> 
+ * Idea:       Oliver Hartkopp <oliver.hartkopp@volkswagen.de>
  * Copyright:  (c) 2011 Czech Technical University in Prague
  *             (c) 2011 Volkswagen Group Research
  * Authors:    Pavel Pisa <pisa@cmp.felk.cvut.cz>
@@ -41,7 +41,7 @@
  * Funded by:  Volkswagen Group Research
  */
 
-#define DEBUG 		1 /* Enables pr_debug() printouts */
+#define DEBUG			1 /* Enables pr_debug() printouts */
 
 #include <linux/module.h>
 #include <linux/moduleparam.h>
@@ -66,7 +66,7 @@
 #include "linux/lin_bus.h"
 
 /* Should be in include/linux/tty.h */
-#define N_SLLIN         	25
+#define N_SLLIN			25
 /* -------------------------------- */
 
 static __initdata const char banner[] =
@@ -77,11 +77,11 @@ MODULE_DESCRIPTION("serial line LIN interface");
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Pavel Pisa <pisa@cmp.felk.cvut.cz>");
 
-#define SLLIN_MAGIC 		0x53CA
+#define SLLIN_MAGIC		0x53CA
 /* #define BREAK_BY_BAUD */
 
 static int master = true;
-static int baudrate = 0; /* Use LIN_DEFAULT_BAUDRATE when not set */
+static int baudrate; /* Use LIN_DEFAULT_BAUDRATE when not set */
 
 module_param(master, bool, 0);
 MODULE_PARM_DESC(master, "LIN interface is Master device");
@@ -95,13 +95,13 @@ module_param(maxdev, int, 0);
 MODULE_PARM_DESC(maxdev, "Maximum number of sllin interfaces");
 
 /* maximum buffer len to store whole LIN message*/
-#define SLLIN_DATA_MAX	 	8
+#define SLLIN_DATA_MAX		8
 #define SLLIN_BUFF_LEN		(1 /*break*/ + 1 /*sync*/ + 1 /*ID*/ + \
-                         	SLLIN_DATA_MAX + 1 /*checksum*/)
-#define SLLIN_BUFF_BREAK 	0
-#define SLLIN_BUFF_SYNC	 	1
-#define SLLIN_BUFF_ID	 	2
-#define SLLIN_BUFF_DATA	 	3
+				SLLIN_DATA_MAX + 1 /*checksum*/)
+#define SLLIN_BUFF_BREAK	0
+#define SLLIN_BUFF_SYNC		1
+#define SLLIN_BUFF_ID		2
+#define SLLIN_BUFF_DATA		3
 
 #define SLLIN_SAMPLES_PER_CHAR	10
 #define SLLIN_CHARS_TO_TIMEOUT	24
@@ -142,11 +142,11 @@ struct sllin {
 	int			tx_cnt;         /* number of already Tx bytes */
 	char			lin_master;	/* node is a master node */
 	int			lin_baud;	/* LIN baudrate */
-	int 			lin_state;	/* state */
-	char  			id_to_send;	/* there is ID to be sent */
+	int			lin_state;	/* state */
+	char			id_to_send;	/* there is ID to be sent */
 	char                    data_to_send;   /* there are data to be sent */
 	char			resp_len_known; /* Length of the response is known */
-	char 			header_received;/* In Slave mode, set when header was already
+	char			header_received;/* In Slave mode, set when header was already
 						   received */
 	char			rx_len_unknown; /* We are not sure how much data will be sent to us --
 						   we just guess the length */
@@ -178,14 +178,14 @@ static int sllin_configure_frame_cache(struct sllin *sl, struct can_frame *cf);
 /* Values of two parity bits in LIN Protected
    Identifier for each particular LIN ID */
 const unsigned char sllin_id_parity_table[] = {
-        0x80, 0xc0, 0x40, 0x00, 0xc0, 0x80, 0x00, 0x40,
-        0x00, 0x40, 0xc0, 0x80, 0x40, 0x00, 0x80, 0xc0,
-        0x40, 0x00, 0x80, 0xc0, 0x00, 0x40, 0xc0, 0x80,
-        0xc0, 0x80, 0x00, 0x40, 0x80, 0xc0, 0x40, 0x00,
-        0x00, 0x40, 0xc0, 0x80, 0x40, 0x00, 0x80, 0xc0,
-        0x80, 0xc0, 0x40, 0x00, 0xc0, 0x80, 0x00, 0x40,
-        0xc0, 0x80, 0x00, 0x40, 0x80, 0xc0, 0x40, 0x00,
-        0x40, 0x00, 0x80, 0xc0, 0x00, 0x40, 0xc0, 0x80
+	0x80, 0xc0, 0x40, 0x00, 0xc0, 0x80, 0x00, 0x40,
+	0x00, 0x40, 0xc0, 0x80, 0x40, 0x00, 0x80, 0xc0,
+	0x40, 0x00, 0x80, 0xc0, 0x00, 0x40, 0xc0, 0x80,
+	0xc0, 0x80, 0x00, 0x40, 0x80, 0xc0, 0x40, 0x00,
+	0x00, 0x40, 0xc0, 0x80, 0x40, 0x00, 0x80, 0xc0,
+	0x80, 0xc0, 0x40, 0x00, 0xc0, 0x80, 0x00, 0x40,
+	0xc0, 0x80, 0x00, 0x40, 0x80, 0xc0, 0x40, 0x00,
+	0x40, 0x00, 0x80, 0xc0, 0x00, 0x40, 0xc0, 0x80
 };
 
 /**
@@ -532,7 +532,7 @@ static void sllin_receive_buf(struct tty_struct *tty,
  *****************************************/
 /**
  * sllin_report_error() -- Report an error by sending CAN frame
- * 	with particular error flag set in can_id
+ *	with particular error flag set in can_id
  *
  * @sl:
  * @err: Error flag to be sent.
@@ -540,17 +540,17 @@ static void sllin_receive_buf(struct tty_struct *tty,
 void sllin_report_error(struct sllin *sl, int err)
 {
 	switch (err) {
-		case LIN_ERR_CHECKSUM:
-			sl->dev->stats.rx_crc_errors++;
-			break;
+	case LIN_ERR_CHECKSUM:
+		sl->dev->stats.rx_crc_errors++;
+		break;
 
-		case LIN_ERR_RX_TIMEOUT:
-			sl->dev->stats.rx_errors++;
-			break;
+	case LIN_ERR_RX_TIMEOUT:
+		sl->dev->stats.rx_errors++;
+		break;
 
-		case LIN_ERR_FRAMING:
-			sl->dev->stats.rx_frame_errors++;
-			break;
+	case LIN_ERR_FRAMING:
+		sl->dev->stats.rx_frame_errors++;
+		break;
 	}
 
 	sllin_send_canfr(sl, 0 | CAN_EFF_FLAG |
@@ -587,9 +587,9 @@ static int sllin_configure_frame_cache(struct sllin *sl, struct can_frame *cf)
 /**
  * sllin_checksum() -- Count checksum for particular data
  *
- * @data: 	 Pointer to the buffer containing whole LIN
+ * @data:	 Pointer to the buffer containing whole LIN
  *		 frame (i.e. including break and sync bytes).
- * @length: 	 Length of the buffer.
+ * @length:	 Length of the buffer.
  * @enhanced_fl: Flag determining whether Enhanced or Classic
  *		 checksum should be counted.
  */
@@ -839,7 +839,7 @@ int sllin_kwthread(void *ptr)
 
 		if ((sl->lin_state == SLSTATE_IDLE) && sl->lin_master &&
 			sl->id_to_send) {
-			if(sllin_send_break(sl) < 0) {
+			if (sllin_send_break(sl) < 0) {
 				/* error processing */
 			}
 		}
@@ -886,171 +886,171 @@ int sllin_kwthread(void *ptr)
 		}
 
 		switch (sl->lin_state) {
-			case SLSTATE_IDLE:
-				if (!test_bit(SLF_MSGEVENT, &sl->flags))
-					break;
+		case SLSTATE_IDLE:
+			if (!test_bit(SLF_MSGEVENT, &sl->flags))
+				break;
 
-				cf = (struct can_frame *)sl->tx_req_skb->data;
+			cf = (struct can_frame *)sl->tx_req_skb->data;
 
-				/* SFF RTR CAN frame -> LIN header */
-				if (cf->can_id & CAN_RTR_FLAG) {
-					spin_lock(&sl->lock);
-					pr_debug("sllin: %s: RTR SFF CAN frame, ID = %x\n",
-						__FUNCTION__, cf->can_id & LIN_ID_MASK);
+			/* SFF RTR CAN frame -> LIN header */
+			if (cf->can_id & CAN_RTR_FLAG) {
+				spin_lock(&sl->lock);
+				pr_debug("sllin: %s: RTR SFF CAN frame, ID = %x\n",
+					__FUNCTION__, cf->can_id & LIN_ID_MASK);
 
-					/* Is there Slave response in linfr_cache to be sent? */
-					if ((sl->linfr_cache[cf->can_id & LIN_ID_MASK].frame_fl &
-						LIN_LOC_SLAVE_CACHE)
-						&& (sl->linfr_cache[cf->can_id & LIN_ID_MASK].dlc > 0)) {
+				/* Is there Slave response in linfr_cache to be sent? */
+				if ((sl->linfr_cache[cf->can_id & LIN_ID_MASK].frame_fl &
+					LIN_LOC_SLAVE_CACHE)
+					&& (sl->linfr_cache[cf->can_id & LIN_ID_MASK].dlc > 0)) {
 
-						pr_debug("sllin: Sending LIN response from linfr_cache\n");
-						lin_data = sl->linfr_cache[cf->can_id & LIN_ID_MASK].data;
-						lin_dlc = sl->linfr_cache[cf->can_id & LIN_ID_MASK].dlc;
-						if (lin_dlc > SLLIN_DATA_MAX)
-							lin_dlc = SLLIN_DATA_MAX;
-						memcpy(lin_data_buff, lin_data, lin_dlc);
-						lin_data = lin_data_buff;
-					} else {
-						lin_data = NULL;
-						lin_dlc = sl->linfr_cache[cf->can_id & LIN_ID_MASK].dlc;
-					}
-					spin_unlock(&sl->lock);
-				} else { /* SFF NON-RTR CAN frame -> LIN header + LIN response */
-					pr_debug("sllin: %s: NON-RTR SFF CAN frame, ID = %x\n",
-						__FUNCTION__, (int)cf->can_id & LIN_ID_MASK);
-
-					lin_data = cf->data;
-					lin_dlc = cf->can_dlc;
+					pr_debug("sllin: Sending LIN response from linfr_cache\n");
+					lin_data = sl->linfr_cache[cf->can_id & LIN_ID_MASK].data;
+					lin_dlc = sl->linfr_cache[cf->can_id & LIN_ID_MASK].dlc;
 					if (lin_dlc > SLLIN_DATA_MAX)
 						lin_dlc = SLLIN_DATA_MAX;
-					tx_bytes = lin_dlc;
+					memcpy(lin_data_buff, lin_data, lin_dlc);
+					lin_data = lin_data_buff;
+				} else {
+					lin_data = NULL;
+					lin_dlc = sl->linfr_cache[cf->can_id & LIN_ID_MASK].dlc;
 				}
+				spin_unlock(&sl->lock);
+			} else { /* SFF NON-RTR CAN frame -> LIN header + LIN response */
+				pr_debug("sllin: %s: NON-RTR SFF CAN frame, ID = %x\n",
+					__FUNCTION__, (int)cf->can_id & LIN_ID_MASK);
 
-				if (sllin_setup_msg(sl, 0, cf->can_id & LIN_ID_MASK,
-					lin_data, lin_dlc) != -1) {
+				lin_data = cf->data;
+				lin_dlc = cf->can_dlc;
+				if (lin_dlc > SLLIN_DATA_MAX)
+					lin_dlc = SLLIN_DATA_MAX;
+				tx_bytes = lin_dlc;
+			}
 
-					sl->id_to_send = true;
-					sl->data_to_send = (lin_data != NULL) ? true : false;
-					sl->resp_len_known = (lin_dlc > 0) ? true : false;
-					sl->dev->stats.tx_packets++;
-					sl->dev->stats.tx_bytes += tx_bytes;
+			if (sllin_setup_msg(sl, 0, cf->can_id & LIN_ID_MASK,
+				lin_data, lin_dlc) != -1) {
+
+				sl->id_to_send = true;
+				sl->data_to_send = (lin_data != NULL) ? true : false;
+				sl->resp_len_known = (lin_dlc > 0) ? true : false;
+				sl->dev->stats.tx_packets++;
+				sl->dev->stats.tx_bytes += tx_bytes;
+			}
+
+			clear_bit(SLF_MSGEVENT, &sl->flags);
+			kfree_skb(sl->tx_req_skb);
+			netif_wake_queue(sl->dev);
+			hrtimer_start(&sl->rx_timer,
+				ktime_add(ktime_get(), sl->rx_timer_timeout),
+				HRTIMER_MODE_ABS);
+			break;
+
+		case SLSTATE_BREAK_SENT:
+#ifdef BREAK_BY_BAUD
+			if (sl->rx_cnt <= SLLIN_BUFF_BREAK)
+				continue;
+
+			res = sltty_change_speed(tty, sl->lin_baud);
+#endif
+
+			sl->lin_state = SLSTATE_ID_SENT;
+			sllin_send_tx_buff(sl);
+			break;
+
+		case SLSTATE_ID_SENT:
+			hrtimer_cancel(&sl->rx_timer);
+			sl->id_to_send = false;
+			if (sl->data_to_send) {
+				sllin_send_tx_buff(sl);
+				sl->lin_state = SLSTATE_RESPONSE_SENT;
+				sl->rx_expect = sl->tx_lim;
+				goto slstate_response_sent;
+			} else {
+				if (sl->resp_len_known) {
+					sl->rx_expect = sl->rx_lim;
+				} else {
+					sl->rx_expect = SLLIN_BUFF_DATA + 2;
 				}
-
-				clear_bit(SLF_MSGEVENT, &sl->flags);
-				kfree_skb(sl->tx_req_skb);
-				netif_wake_queue(sl->dev);
+				sl->lin_state = SLSTATE_RESPONSE_WAIT;
+				/* If we don't receive anything, timer will "unblock" us */
 				hrtimer_start(&sl->rx_timer,
 					ktime_add(ktime_get(), sl->rx_timer_timeout),
 					HRTIMER_MODE_ABS);
-				break;
+				goto slstate_response_wait;
+			}
+			break;
 
-			case SLSTATE_BREAK_SENT:
-#ifdef BREAK_BY_BAUD
-				if (sl->rx_cnt <= SLLIN_BUFF_BREAK)
-					continue;
+		case SLSTATE_RESPONSE_WAIT:
+slstate_response_wait:
+			if (test_bit(SLF_MSGEVENT, &sl->flags)) {
+				unsigned char *lin_buff;
+				cf = (struct can_frame *)sl->tx_req_skb->data;
 
-				res = sltty_change_speed(tty, sl->lin_baud);
-#endif
+				lin_buff = (sl->lin_master) ? sl->tx_buff : sl->rx_buff;
+				if (cf->can_id == (lin_buff[SLLIN_BUFF_ID] & LIN_ID_MASK)) {
+					hrtimer_cancel(&sl->rx_timer);
+					pr_debug("sllin: received LIN response in a CAN frame.\n");
+					if (sllin_setup_msg(sl, SLLIN_STPMSG_RESPONLY,
+						cf->can_id & LIN_ID_MASK,
+						cf->data, cf->can_dlc) != -1) {
 
-				sl->lin_state = SLSTATE_ID_SENT;
-				sllin_send_tx_buff(sl);
-				break;
+						sl->rx_expect = sl->tx_lim;
+						sl->data_to_send = true;
+						sl->dev->stats.tx_packets++;
+						sl->dev->stats.tx_bytes += tx_bytes;
 
-			case SLSTATE_ID_SENT:
-				hrtimer_cancel(&sl->rx_timer);
-				sl->id_to_send = false;
-				if (sl->data_to_send) {
-					sllin_send_tx_buff(sl);
-					sl->lin_state = SLSTATE_RESPONSE_SENT;
-					sl->rx_expect = sl->tx_lim;
-					goto slstate_response_sent;
-				} else {
-					if (sl->resp_len_known) {
-						sl->rx_expect = sl->rx_lim;
-					} else {
-						sl->rx_expect = SLLIN_BUFF_DATA + 2;
-					}
-					sl->lin_state = SLSTATE_RESPONSE_WAIT;
-					/* If we don't receive anything, timer will "unblock" us */
-					hrtimer_start(&sl->rx_timer,
-						ktime_add(ktime_get(), sl->rx_timer_timeout),
-						HRTIMER_MODE_ABS);
-					goto slstate_response_wait;
-				}
-				break;
-
-			case SLSTATE_RESPONSE_WAIT:
-			slstate_response_wait:
-				if (test_bit(SLF_MSGEVENT, &sl->flags)) {
-					unsigned char *lin_buff;
-					cf = (struct can_frame *)sl->tx_req_skb->data;
-
-					lin_buff = (sl->lin_master) ? sl->tx_buff : sl->rx_buff;
-					if (cf->can_id == (lin_buff[SLLIN_BUFF_ID] & LIN_ID_MASK)) {
-						hrtimer_cancel(&sl->rx_timer);
-						pr_debug("sllin: received LIN response in a CAN frame.\n");
-						if (sllin_setup_msg(sl, SLLIN_STPMSG_RESPONLY,
-							cf->can_id & LIN_ID_MASK,
-							cf->data, cf->can_dlc) != -1) {
-
-							sl->rx_expect = sl->tx_lim;
-							sl->data_to_send = true;
-							sl->dev->stats.tx_packets++;
-							sl->dev->stats.tx_bytes += tx_bytes;
-
-							if (!sl->lin_master) {
-								sl->tx_cnt = SLLIN_BUFF_DATA;
-							}
-
-							sllin_send_tx_buff(sl);
-							clear_bit(SLF_MSGEVENT, &sl->flags);
-							kfree_skb(sl->tx_req_skb);
-							netif_wake_queue(sl->dev);
-
-							sl->lin_state = SLSTATE_RESPONSE_SENT;
-							goto slstate_response_sent;
+						if (!sl->lin_master) {
+							sl->tx_cnt = SLLIN_BUFF_DATA;
 						}
-					} else {
-						sl->lin_state = SLSTATE_RESPONSE_WAIT_BUS;
+
+						sllin_send_tx_buff(sl);
+						clear_bit(SLF_MSGEVENT, &sl->flags);
+						kfree_skb(sl->tx_req_skb);
+						netif_wake_queue(sl->dev);
+
+						sl->lin_state = SLSTATE_RESPONSE_SENT;
+						goto slstate_response_sent;
 					}
-				}
-
-				/* Be aware, no BREAK here */
-			case SLSTATE_RESPONSE_WAIT_BUS:
-				if (sl->rx_cnt < sl->rx_expect)
-					continue;
-
-				hrtimer_cancel(&sl->rx_timer);
-				pr_debug("sllin: response received ID %d len %d\n",
-					sl->rx_buff[SLLIN_BUFF_ID], sl->rx_cnt - SLLIN_BUFF_DATA - 1);
-
-				if (sllin_rx_validate(sl) == -1) {
-					pr_debug("sllin: RX validation failed.\n");
-					sllin_report_error(sl, LIN_ERR_CHECKSUM);
 				} else {
-					/* Send CAN non-RTR frame with data */
-					pr_debug("sllin: sending NON-RTR CAN"
-						"frame with LIN payload.");
-					sll_bump(sl); /* send packet to the network layer */
+					sl->lin_state = SLSTATE_RESPONSE_WAIT_BUS;
 				}
+			}
 
-				sl->id_to_send = false;
-				sl->lin_state = SLSTATE_IDLE;
-				break;
+			/* Be aware, no BREAK here */
+		case SLSTATE_RESPONSE_WAIT_BUS:
+			if (sl->rx_cnt < sl->rx_expect)
+				continue;
 
-			case SLSTATE_RESPONSE_SENT:
-			slstate_response_sent:
-				if (sl->rx_cnt < sl->tx_lim)
-					continue;
+			hrtimer_cancel(&sl->rx_timer);
+			pr_debug("sllin: response received ID %d len %d\n",
+				sl->rx_buff[SLLIN_BUFF_ID], sl->rx_cnt - SLLIN_BUFF_DATA - 1);
 
-				hrtimer_cancel(&sl->rx_timer);
+			if (sllin_rx_validate(sl) == -1) {
+				pr_debug("sllin: RX validation failed.\n");
+				sllin_report_error(sl, LIN_ERR_CHECKSUM);
+			} else {
+				/* Send CAN non-RTR frame with data */
+				pr_debug("sllin: sending NON-RTR CAN"
+					"frame with LIN payload.");
 				sll_bump(sl); /* send packet to the network layer */
-				pr_debug("sllin: response sent ID %d len %d\n",
-					sl->rx_buff[SLLIN_BUFF_ID], sl->rx_cnt - SLLIN_BUFF_DATA - 1);
+			}
 
-				sl->id_to_send = false;
-				sl->lin_state = SLSTATE_IDLE;
-				break;
+			sl->id_to_send = false;
+			sl->lin_state = SLSTATE_IDLE;
+			break;
+
+		case SLSTATE_RESPONSE_SENT:
+slstate_response_sent:
+			if (sl->rx_cnt < sl->tx_lim)
+				continue;
+
+			hrtimer_cancel(&sl->rx_timer);
+			sll_bump(sl); /* send packet to the network layer */
+			pr_debug("sllin: response sent ID %d len %d\n",
+				sl->rx_buff[SLLIN_BUFF_ID], sl->rx_cnt - SLLIN_BUFF_DATA - 1);
+
+			sl->id_to_send = false;
+			sl->lin_state = SLSTATE_IDLE;
+			break;
 		}
 	}
 
