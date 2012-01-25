@@ -497,6 +497,7 @@ static void sllin_receive_buf(struct tty_struct *tty,
 				lin_id = sl->rx_buff[SLLIN_BUFF_ID] & LIN_ID_MASK;
 				sce = &sl->linfr_cache[lin_id];
 
+				spin_lock(&sl->lock);
 				/* Is the length of data set in frame cache? */
 				if (sce->frame_fl & LIN_LOC_SLAVE_CACHE) {
 					sl->rx_expect += sce->dlc;
@@ -505,6 +506,7 @@ static void sllin_receive_buf(struct tty_struct *tty,
 					sl->rx_expect += SLLIN_DATA_MAX + 1; /* + checksum */
 					sl->rx_len_unknown = true;
 				}
+				spin_unlock(&sl->lock);
 
 				sl->header_received = true;
 				sll_send_rtr(sl);
@@ -563,6 +565,8 @@ void sllin_report_error(struct sllin *sl, int err)
  * @sl:
  * @cf: Pointer to CAN frame sent to this driver
  *	holding configuration information
+ *
+ * Called with sl->lock held. 
  */
 static int sllin_configure_frame_cache(struct sllin *sl, struct can_frame *cf)
 {
@@ -792,8 +796,10 @@ static int sllin_rx_validate(struct sllin *sl)
 
 	actual_id = sl->rx_buff[SLLIN_BUFF_ID] & LIN_ID_MASK;
 	scf = &sl->linfr_cache[actual_id];
+	spin_lock(&sl->lock);
 	lin_dlc = scf->dlc;
 	ext_chcks_fl = scf->frame_fl & LIN_CHECKSUM_EXTENDED;
+	spin_unlock(&sl->lock);
 
 	if (sllin_checksum(sl->rx_buff, sl->rx_cnt - 1, ext_chcks_fl) !=
 		rec_chcksm) {
