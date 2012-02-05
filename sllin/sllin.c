@@ -157,7 +157,9 @@ struct sllin {
 #define SLF_RXEVENT		2               /* Rx wake event             */
 #define SLF_TXEVENT		3               /* Tx wake event             */
 #define SLF_MSGEVENT		4               /* CAN message to sent       */
-#define SLF_TMOUTEVENT          5               /* Timeout on received data  */
+#define SLF_TMOUTEVENT		5               /* Timeout on received data  */
+#define SLF_TXBUFF_RQ		6               /* Req. to send buffer to UART*/
+#define SLF_TXBUFF_INPR		7               /* Above request in progress */
 
 	dev_t			line;
 	struct task_struct	*kwthread;
@@ -235,9 +237,8 @@ static void sllin_send_canfr(struct sllin *sl, canid_t id, char *data, int len)
 
 	cf.can_id = id;
 	cf.can_dlc = len;
-	if (cf.can_dlc > 0) {
+	if (cf.can_dlc > 0)
 		memcpy(&cf.data, data, cf.can_dlc);
-	}
 
 	skb = dev_alloc_skb(sizeof(struct can_frame));
 	if (!skb)
@@ -282,7 +283,7 @@ static void sll_send_rtr(struct sllin *sl)
  */
 static void sllin_write_wakeup(struct tty_struct *tty)
 {
-	int actual;
+	int actual = 0;
 	int remains;
 	struct sllin *sl = (struct sllin *) tty->disc_data;
 
@@ -290,22 +291,35 @@ static void sllin_write_wakeup(struct tty_struct *tty)
 	if (!sl || sl->magic != SLLIN_MAGIC || !netif_running(sl->dev))
 		return;
 
-	if (sl->lin_state != SLSTATE_BREAK_SENT)
-		remains = sl->tx_lim - sl->tx_cnt;
-	else
-		remains = SLLIN_BUFF_BREAK + 1 - sl->tx_cnt;
+	set_bit(SLF_TXBUFF_RQ, &sl->flags);
+	do {
+		if (unlikely(test_and_set_bit(SLF_TXBUFF_INPR, &sl->flags)))
+			return;	/* ongoing concurrent processing */
 
-	if (remains > 0) {
-		actual = tty->ops->write(tty, sl->tx_buff + sl->tx_cnt,
-			sl->tx_cnt - sl->tx_lim);
-		sl->tx_cnt += actual;
+		clear_bit(SLF_TXBUFF_RQ, &sl->flags);
+		smp_mb__after_clear_bit();
 
-		if (sl->tx_cnt < sl->tx_lim) {
-			pr_debug("sllin: sllin_write_wakeup sent %d, "
-				"remains %d, waiting\n",
-				sl->tx_cnt, sl->tx_lim - sl->tx_cnt);
-			return;
+		if (sl->lin_state != SLSTATE_BREAK_SENT)
+			remains = sl->tx_lim - sl->tx_cnt;
+		else
+			remains = SLLIN_BUFF_BREAK + 1 - sl->tx_cnt;
+
+		if (remains > 0) {
+			actual = tty->ops->write(tty, sl->tx_buff + sl->tx_cnt,
+				sl->tx_cnt - sl->tx_lim);
+			sl->tx_cnt += actual;
+			remains -= actual;
 		}
+		clear_bit(SLF_TXBUFF_INPR, &sl->flags);
+		smp_mb__after_clear_bit();
+
+	} while (unlikely(test_bit(SLF_TXBUFF_RQ, &sl->flags)));
+
+	if ((remains > 0) && (actual >= 0)) {
+		pr_debug("sllin: sllin_write_wakeup sent %d, "
+			"remains %d, waiting\n",
+			sl->tx_cnt, sl->tx_lim - sl->tx_cnt);
+		return;
 	}
 
 	clear_bit(TTY_DO_WRITE_WAKEUP, &tty->flags);
@@ -335,6 +349,7 @@ static netdev_tx_t sll_xmit(struct sk_buff *skb, struct net_device *dev)
 		goto err_out_unlock;
 	}
 	if (sl->tty == NULL) {
+		printk(KERN_WARNING "%s: xmit: no tty device connected\n", dev->name);
 		goto err_out_unlock;
 	}
 
@@ -388,7 +403,7 @@ static int sll_open(struct net_device *dev)
 {
 	struct sllin *sl = netdev_priv(dev);
 
-	pr_debug("sllin: %s() invoked\n", __FUNCTION__);
+	pr_debug("sllin: %s() invoked\n", __func__);
 
 	if (sl->tty == NULL)
 		return -ENODEV;
@@ -609,11 +624,10 @@ static inline unsigned sllin_checksum(unsigned char *data, int length, int enhan
 	unsigned csum = 0;
 	int i;
 
-	if (enhanced_fl) {
+	if (enhanced_fl)
 		i = SLLIN_BUFF_ID;
-	} else {
+	else
 		i = SLLIN_BUFF_DATA;
-	}
 
 	for (; i < length; i++) {
 		csum += data[i];
@@ -675,38 +689,56 @@ int sllin_send_tx_buff(struct sllin *sl)
 	int remains;
 	int res;
 
+	set_bit(SLF_TXBUFF_RQ, &sl->flags);
+	do {
+		if (unlikely(test_and_set_bit(SLF_TXBUFF_INPR, &sl->flags)))
+			return 0;	/* ongoing concurrent processing */
+
+		clear_bit(SLF_TXBUFF_RQ, &sl->flags);
+		smp_mb__after_clear_bit();
+
 #ifdef BREAK_BY_BAUD
-	if (sl->lin_state != SLSTATE_BREAK_SENT)
-		remains = sl->tx_lim - sl->tx_cnt;
-	else
-		remains = 1;
+		if (sl->lin_state != SLSTATE_BREAK_SENT)
+			remains = sl->tx_lim - sl->tx_cnt;
+		else
+			remains = 1;
 #else
-	remains = sl->tx_lim - sl->tx_cnt;
+		remains = sl->tx_lim - sl->tx_cnt;
 #endif
 
-	res = tty->ops->write(tty, sl->tx_buff + sl->tx_cnt, remains);
-	if (res < 0)
-		return -1;
-
-	remains -= res;
-	sl->tx_cnt += res;
-
-	if (remains > 0) {
-		set_bit(TTY_DO_WRITE_WAKEUP, &tty->flags);
 		res = tty->ops->write(tty, sl->tx_buff + sl->tx_cnt, remains);
-		if (res < 0) {
-			clear_bit(TTY_DO_WRITE_WAKEUP, &tty->flags);
-			return -1;
-		}
+		if (res < 0)
+			goto error_in_write;
 
 		remains -= res;
 		sl->tx_cnt += res;
-	}
 
-	pr_debug("sllin: sllin_send_tx_buff sent %d, remains %d\n",
-			sl->tx_cnt, remains);
+		if (remains > 0) {
+			set_bit(TTY_DO_WRITE_WAKEUP, &tty->flags);
+			res = tty->ops->write(tty, sl->tx_buff + sl->tx_cnt, remains);
+			if (res < 0) {
+				clear_bit(TTY_DO_WRITE_WAKEUP, &tty->flags);
+				goto error_in_write;
+			}
+
+			remains -= res;
+			sl->tx_cnt += res;
+		}
+
+		pr_debug("sllin: sllin_send_tx_buff sent %d, remains %d\n",
+				sl->tx_cnt, remains);
+
+		clear_bit(SLF_TXBUFF_INPR, &sl->flags);
+		smp_mb__after_clear_bit();
+
+	} while (unlikely(test_bit(SLF_TXBUFF_RQ, &sl->flags)));
 
 	return 0;
+
+error_in_write:
+	clear_bit(SLF_TXBUFF_INPR, &sl->flags);
+	return -1;
+
 }
 
 #ifdef BREAK_BY_BAUD
@@ -913,7 +945,7 @@ int sllin_kwthread(void *ptr)
 				struct sllin_conf_entry *sce;
 
 				pr_debug("sllin: %s: RTR SFF CAN frame, ID = %x\n",
-					__FUNCTION__, cf->can_id & LIN_ID_MASK);
+					__func__, cf->can_id & LIN_ID_MASK);
 
 				sce = &sl->linfr_cache[cf->can_id & LIN_ID_MASK];
 				spin_lock_irqsave(&sl->linfr_lock, flags);
@@ -938,7 +970,7 @@ int sllin_kwthread(void *ptr)
 
 			} else { /* SFF NON-RTR CAN frame -> LIN header + LIN response */
 				pr_debug("sllin: %s: NON-RTR SFF CAN frame, ID = %x\n",
-					__FUNCTION__, (int)cf->can_id & LIN_ID_MASK);
+					__func__, (int)cf->can_id & LIN_ID_MASK);
 
 				lin_data = cf->data;
 				lin_dlc = cf->can_dlc;
@@ -1171,7 +1203,7 @@ static int sllin_open(struct tty_struct *tty)
 {
 	struct sllin *sl;
 	int err;
-	pr_debug("sllin: %s() invoked\n", __FUNCTION__);
+	pr_debug("sllin: %s() invoked\n", __func__);
 
 	if (!capable(CAP_NET_ADMIN))
 		return -EPERM;
