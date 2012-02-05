@@ -169,6 +169,7 @@ struct sllin {
 
 	/* List with configurations for	each of 0 to LIN_ID_MAX LIN IDs */
 	struct sllin_conf_entry linfr_cache[LIN_ID_MAX + 1];
+	spinlock_t		linfr_lock;	/* frame cache and buffers lock */
 };
 
 static struct net_device **sllin_devs;
@@ -494,10 +495,12 @@ static void sllin_receive_buf(struct tty_struct *tty,
 					sl->rx_cnt, sl->header_received);
 
 			if (SLL_HEADER_RECEIVED) {
+				unsigned long flags;
+
 				lin_id = sl->rx_buff[SLLIN_BUFF_ID] & LIN_ID_MASK;
 				sce = &sl->linfr_cache[lin_id];
 
-				spin_lock(&sl->lock);
+				spin_lock_irqsave(&sl->linfr_lock, flags);
 				/* Is the length of data set in frame cache? */
 				if (sce->frame_fl & LIN_LOC_SLAVE_CACHE) {
 					sl->rx_expect += sce->dlc;
@@ -506,7 +509,7 @@ static void sllin_receive_buf(struct tty_struct *tty,
 					sl->rx_expect += SLLIN_DATA_MAX + 1; /* + checksum */
 					sl->rx_len_unknown = true;
 				}
-				spin_unlock(&sl->lock);
+				spin_unlock_irqrestore(&sl->linfr_lock, flags);
 
 				sl->header_received = true;
 				sll_send_rtr(sl);
@@ -565,12 +568,12 @@ void sllin_report_error(struct sllin *sl, int err)
  * @sl:
  * @cf: Pointer to CAN frame sent to this driver
  *	holding configuration information
- *
- * Called with sl->lock held. 
  */
 static int sllin_configure_frame_cache(struct sllin *sl, struct can_frame *cf)
 {
+	unsigned long flags;
 	struct sllin_conf_entry *sce;
+
 	if (!(cf->can_id & LIN_ID_CONF))
 		return -1;
 
@@ -578,12 +581,16 @@ static int sllin_configure_frame_cache(struct sllin *sl, struct can_frame *cf)
 	pr_debug("sllin: Setting frame cache with EFF CAN frame. "
 		"LIN ID = %d\n", cf->can_id & LIN_ID_MASK);
 
+	spin_lock_irqsave(&sl->linfr_lock, flags);
+
 	sce->dlc = cf->can_dlc;
 	if (sce->dlc > SLLIN_DATA_MAX)
 		sce->dlc = SLLIN_DATA_MAX;
 
 	sce->frame_fl = (cf->can_id & ~LIN_ID_MASK) & CAN_EFF_MASK;
 	memcpy(sce->data, cf->data, cf->can_dlc);
+
+	spin_unlock_irqrestore(&sl->linfr_lock, flags);
 
 	return 0;
 }
@@ -788,18 +795,20 @@ static enum hrtimer_restart sllin_rx_timeout_handler(struct hrtimer *hrtimer)
  */
 static int sllin_rx_validate(struct sllin *sl)
 {
+	unsigned long flags;
 	int actual_id;
 	int ext_chcks_fl;
 	int lin_dlc;
 	unsigned char rec_chcksm = sl->rx_buff[sl->rx_cnt - 1];
-	struct sllin_conf_entry *scf;
+	struct sllin_conf_entry *sce;
 
 	actual_id = sl->rx_buff[SLLIN_BUFF_ID] & LIN_ID_MASK;
-	scf = &sl->linfr_cache[actual_id];
-	spin_lock(&sl->lock);
-	lin_dlc = scf->dlc;
-	ext_chcks_fl = scf->frame_fl & LIN_CHECKSUM_EXTENDED;
-	spin_unlock(&sl->lock);
+	sce = &sl->linfr_cache[actual_id];
+
+	spin_lock_irqsave(&sl->linfr_lock, flags);
+	lin_dlc = sce->dlc;
+	ext_chcks_fl = sce->frame_fl & LIN_CHECKSUM_EXTENDED;
+	spin_unlock_irqrestore(&sl->linfr_lock, flags);
 
 	if (sllin_checksum(sl->rx_buff, sl->rx_cnt - 1, ext_chcks_fl) !=
 		rec_chcksm) {
@@ -900,27 +909,33 @@ int sllin_kwthread(void *ptr)
 
 			/* SFF RTR CAN frame -> LIN header */
 			if (cf->can_id & CAN_RTR_FLAG) {
-				spin_lock(&sl->lock);
+				unsigned long flags;
+				struct sllin_conf_entry *sce;
+
 				pr_debug("sllin: %s: RTR SFF CAN frame, ID = %x\n",
 					__FUNCTION__, cf->can_id & LIN_ID_MASK);
 
+				sce = &sl->linfr_cache[cf->can_id & LIN_ID_MASK];
+				spin_lock_irqsave(&sl->linfr_lock, flags);
+
 				/* Is there Slave response in linfr_cache to be sent? */
-				if ((sl->linfr_cache[cf->can_id & LIN_ID_MASK].frame_fl &
-					LIN_LOC_SLAVE_CACHE)
-					&& (sl->linfr_cache[cf->can_id & LIN_ID_MASK].dlc > 0)) {
+				if ((sce->frame_fl & LIN_LOC_SLAVE_CACHE)
+					&& (sce->dlc > 0)) {
 
 					pr_debug("sllin: Sending LIN response from linfr_cache\n");
-					lin_data = sl->linfr_cache[cf->can_id & LIN_ID_MASK].data;
-					lin_dlc = sl->linfr_cache[cf->can_id & LIN_ID_MASK].dlc;
+
+					lin_data = sce->data;
+					lin_dlc = sce->dlc;
 					if (lin_dlc > SLLIN_DATA_MAX)
 						lin_dlc = SLLIN_DATA_MAX;
 					memcpy(lin_data_buff, lin_data, lin_dlc);
 					lin_data = lin_data_buff;
 				} else {
 					lin_data = NULL;
-					lin_dlc = sl->linfr_cache[cf->can_id & LIN_ID_MASK].dlc;
+					lin_dlc = sce->dlc;
 				}
-				spin_unlock(&sl->lock);
+				spin_unlock_irqrestore(&sl->linfr_lock, flags);
+
 			} else { /* SFF NON-RTR CAN frame -> LIN header + LIN response */
 				pr_debug("sllin: %s: NON-RTR SFF CAN frame, ID = %x\n",
 					__FUNCTION__, (int)cf->can_id & LIN_ID_MASK);
@@ -1136,6 +1151,7 @@ static struct sllin *sll_alloc(dev_t line)
 	sl->magic = SLLIN_MAGIC;
 	sl->dev	= dev;
 	spin_lock_init(&sl->lock);
+	spin_lock_init(&sl->linfr_lock);
 	sllin_devs[i] = dev;
 
 	return sl;
