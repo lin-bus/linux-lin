@@ -447,13 +447,6 @@ static void sll_setup(struct net_device *dev)
 /******************************************
   Routines looking at TTY side.
  ******************************************/
-#define SLL_RESPONSE_RECEIVED		((sl->header_received == true) && \
-					 ((sl->rx_cnt >= sl->rx_expect) || \
-					 ((sl->rx_len_unknown == true) && (count == 0))))
-
-#define SLL_HEADER_RECEIVED		((sl->header_received == false) && \
-					 (sl->rx_cnt >= (SLLIN_BUFF_ID + 1)))
-
 static void sllin_receive_buf(struct tty_struct *tty,
 			      const unsigned char *cp, char *fp, int count)
 {
@@ -470,10 +463,13 @@ static void sllin_receive_buf(struct tty_struct *tty,
 				"due marker 0x%02x, flags 0x%lx\n",
 				*cp, *(fp-1), sl->flags);
 
-			if (sl->lin_master == true) { /* Report error */
-				set_bit(SLF_ERROR, &sl->flags);
-				wake_up(&sl->kwt_wq);
-				return;
+			if (sl->lin_master == true) {
+				if (sl->rx_cnt > SLLIN_BUFF_BREAK) {
+					/* Report error */
+					set_bit(SLF_ERROR, &sl->flags);
+					wake_up(&sl->kwt_wq);
+					return;
+				}
 			} else { /* Received Break */
 				sl->rx_cnt = 0;
 				sl->rx_expect = SLLIN_BUFF_ID + 1;
@@ -495,7 +491,7 @@ static void sllin_receive_buf(struct tty_struct *tty,
 		}
 
 		if (sl->lin_master == true) {
-			if (SLL_RESPONSE_RECEIVED) {
+			if ((sl->rx_cnt >= sl->rx_expect) && (count == 0)) {
 				set_bit(SLF_RXEVENT, &sl->flags);
 				wake_up(&sl->kwt_wq);
 				pr_debug("sllin: sllin_receive_buf count %d, wakeup\n",	sl->rx_cnt);
@@ -509,7 +505,8 @@ static void sllin_receive_buf(struct tty_struct *tty,
 			pr_debug("sllin: rx_cnt = %u; header_received = %u\n",
 					sl->rx_cnt, sl->header_received);
 
-			if (SLL_HEADER_RECEIVED) {
+			/* Header received */
+			if ((sl->header_received == false) && (sl->rx_cnt >= (SLLIN_BUFF_ID + 1))) {
 				unsigned long flags;
 
 				lin_id = sl->rx_buff[SLLIN_BUFF_ID] & LIN_ID_MASK;
@@ -531,7 +528,11 @@ static void sllin_receive_buf(struct tty_struct *tty,
 				continue;
 			}
 
-			if (SLL_RESPONSE_RECEIVED) {
+			/* Response received */
+			if ((sl->header_received == true) &&
+				((sl->rx_cnt >= sl->rx_expect) ||
+				((sl->rx_len_unknown == true) && (count == 0)))) {
+
 				sll_bump(sl);
 				pr_debug("sllin: Received LIN header & LIN response. "
 						"rx_cnt = %u, rx_expect = %u\n", sl->rx_cnt,
