@@ -516,11 +516,30 @@ static void sllin_slave_receive_buf(struct tty_struct *tty,
 			sl->rx_expect = SLLIN_BUFF_ID + 1;
 			sl->rx_len_unknown = false; /* We do know exact length of the header */
 			sl->header_received = false;
-			//sl->rx_buff[sl->rx_cnt++] = 0x00;
 		}
 
 		if (sl->rx_cnt < SLLIN_BUFF_LEN) {
 			pr_debug("sllin: LIN_RX[%d]: 0x%02x\n", sl->rx_cnt, *cp);
+
+			/* We did not receive break (0x00) character */
+			if ((sl->rx_cnt == SLLIN_BUFF_BREAK) && (*cp == 0x55)) {
+				sl->rx_buff[sl->rx_cnt++] = 0x00;
+				sl->rx_buff[sl->rx_cnt++] = 0x55;
+				cp++;
+			}
+
+			if (sl->rx_cnt == SLLIN_BUFF_SYNC) {
+				/* 'Duplicated' break character -- ignore */
+				if ((*cp == 0x00) && (*(cp + 1) == 0x55)) {
+					cp++;
+					continue;
+				}
+
+				/* Wrong sync character */
+				if (*cp != 0x55)
+					break;
+			}
+
 			sl->rx_buff[sl->rx_cnt++] = *cp++;
 		}
 
