@@ -524,13 +524,11 @@ static void sllin_slave_receive_buf(struct tty_struct *tty,
 			/* We did not receive break (0x00) character */
 			if ((sl->rx_cnt == SLLIN_BUFF_BREAK) && (*cp == 0x55)) {
 				sl->rx_buff[sl->rx_cnt++] = 0x00;
-				sl->rx_buff[sl->rx_cnt++] = 0x55;
-				cp++;
 			}
 
 			if (sl->rx_cnt == SLLIN_BUFF_SYNC) {
 				/* 'Duplicated' break character -- ignore */
-				if ((*cp == 0x00) && (*(cp + 1) == 0x55)) {
+				if (*cp == 0x00) {
 					cp++;
 					continue;
 				}
