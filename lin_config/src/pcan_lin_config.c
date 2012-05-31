@@ -26,6 +26,7 @@
 #define MAX_LIN_ID				0x3F
 #define PCL_ACTIVE				1
 #define PCL_UNACTIVE				0
+#define PCL_DEFAULT_CONFIG			"config.pclin"
 
 #define PCL_PKT_MAX_SIZE			16
 #define PCL_HEADERS_SIZE			2 /* There are 2 bytes of headers */
@@ -494,23 +495,7 @@ static void pcl_set_input_mode(int tty)
 
 }
 
-void pcl_explain(int argc, char *argv[])
-{
-	fprintf(stderr, "Usage: %s [OPTIONS] <SERIAL_INTERFACE>\n", argv[0]);
-	fprintf(stderr, "\n");
-	fprintf(stderr, "'pcan_lin_config' Is used for configuring PEAK PCAN-LIN device.\n");
-	fprintf(stderr, "  When invoked without any OPTIONS, it configures PCAN-LIN device\n");
-	fprintf(stderr, "  with default configuration from the program.\n");
-	fprintf(stderr, "  The PCAN-LIN module enables CAN, LIN and serial participants to communicate.\n");
-	fprintf(stderr, "\n");
-	fprintf(stderr, "Options:\n");
-	fprintf(stderr, " -r         Execute only Reset of a device\n");
-	fprintf(stderr, " -f         Flash the active configuration\n");
-	fprintf(stderr, "\n");
-	fprintf(stderr, "Examples:\n");
-	fprintf(stderr, " %s /dev/ttyS0      (Configure the device with the default configuration)\n", argv[0]);
-	fprintf(stderr, " %s -r /dev/ttyS0   (Reset the device)\n", argv[0]);
-}
+/****** XML PARSING ******/
 
 static inline int pcl_xml_get_prop_int(xmlNodePtr cur, const xmlChar* str)
 {
@@ -603,7 +588,7 @@ void pcl_parse_frame_configuration(xmlDocPtr doc, xmlNodePtr cur)
 							//indx = pcl_xml_get_prop_int(tmp_node2,
 							//	(const xmlChar *)"Index");
 							val = pcl_xml_get_element_int(doc, tmp_node2);
-							printf("Data = %d\n", val);
+							//printf("Data = %d\n", val);
 							snprintf((char *)&tmp_fr_entry.data[indx], 1, "%i", val);
 							indx++;
 						}
@@ -628,7 +613,7 @@ int pcl_parse_configuration(char *filename)
 	xmlNodePtr cur_node;
 
 	if (!filename)
-		filename = "config.pclin";
+		filename = PCL_DEFAULT_CONFIG;
 
 	xmlKeepBlanksDefault(1);
 	doc = xmlParseFile(filename);
@@ -692,21 +677,46 @@ exit_failure:
 	return -1;
 }
 
+void pcl_explain(int argc, char *argv[])
+{
+	fprintf(stderr, "Usage: %s [OPTIONS] <SERIAL_INTERFACE>\n", argv[0]);
+	fprintf(stderr, "\n");
+	fprintf(stderr, "'pcan_lin_config' Is used for configuring PEAK PCAN-LIN device.\n");
+	fprintf(stderr, "  When invoked without any OPTIONS, it configures PCAN-LIN device\n");
+	fprintf(stderr, "  with configuration obtained from '"PCL_DEFAULT_CONFIG"' file (if it exists).\n");
+	fprintf(stderr, "  The PCAN-LIN module enables CAN, LIN and serial participants to communicate.\n");
+	fprintf(stderr, "\n");
+	fprintf(stderr, "Options:\n");
+	fprintf(stderr, " -r          Execute only Reset of a device\n");
+	fprintf(stderr, " -f          Flash the active configuration\n");
+	fprintf(stderr, " -c <FILE>   Path to XML configuration file\n");
+	fprintf(stderr, "\n");
+	fprintf(stderr, "Examples:\n");
+	fprintf(stderr, " %s /dev/ttyS0      (Configure the device with the configuration from '"PCL_DEFAULT_CONFIG"')\n",
+		argv[0]);
+	fprintf(stderr, " %s -r /dev/ttyS0   (Reset the device)\n", argv[0]);
+}
+
 int main(int argc, char *argv[])
 {
 	char dev[32]; // FIXME
+	int ret;
 	int tty;
 	int opt;
 	int pcl_reset_device_fl = false;
 	int pcl_flash_config_fl = false;
+	char *filename = NULL;
 
-	while ((opt = getopt(argc, argv, "rf")) != -1) {
+	while ((opt = getopt(argc, argv, "rfc:")) != -1) {
 		switch (opt) {
 		case 'r':
 			pcl_reset_device_fl = true;
 			break;
 		case 'f':
 			pcl_flash_config_fl = true;
+			break;
+		case 'c':
+			filename = optarg;
 			break;
 		default:
 			pcl_explain(argc, argv);
@@ -727,8 +737,9 @@ int main(int argc, char *argv[])
 		return -4;
 	}
 
-	pcl_parse_configuration(NULL);
-	return 0;
+	ret = pcl_parse_configuration(filename);
+	if (!ret)
+		printf("Configuration file %s parsed correctly\n", filename);
 
 	/* Configure UART */
 	pcl_set_input_mode(tty);
