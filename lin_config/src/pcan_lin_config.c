@@ -17,27 +17,21 @@
 #include <string.h>
 #include <termios.h>
 #include <stdint.h>
+#include <assert.h>
+#include <libxml/parser.h>
 
 #define true					1
 #define false					0
+
+#define MAX_LIN_ID				0x3F
+#define PCL_ACTIVE				1
+#define PCL_UNACTIVE				0
 
 #define PCL_PKT_MAX_SIZE			16
 #define PCL_HEADERS_SIZE			2 /* There are 2 bytes of headers */
 #define PCL_CHECKSUM_SIZE			1
 #define PCL_STX_SIZE				1
 #define PCL_PACKET_OVERHEAD			(PCL_HEADERS_SIZE + PCL_CHECKSUM_SIZE)
-
-/* Logical representation of a packet sent to PCAN-LIN converter via RS232 */
-typedef struct {
-	uint8_t stx;        /* Start transmission; Always set to 0x2 */
-	uint8_t seq_no;     /* Sequence number */
-	uint8_t seq_frlen;  /* Frame length */
-	uint8_t ctrl_tiface;/* Target interface */
-	uint8_t ctrl_comc;  /* Command code */
-	uint8_t parms[8];   /* Parameters; Number of parameters depends
-				on the frame length */
-	uint8_t chks;       /* Checksum; Bitwise XOR of all bytes except STX */
-} pcl_packet_t;
 
 #define PCL_STX					0x2
 
@@ -51,113 +45,43 @@ typedef struct {
 #define PCL_PACKET_LIN_IFACE			0x2
 #define PCL_PACKET_MODULE_IFACE			0x3
 
-struct termios term_attr;
+/* Logical representation of a packet sent to PCAN-LIN converter via RS232 */
+typedef struct {
+	uint8_t stx;        /* Start transmission; Always set to 0x2 */
+	uint8_t seq_no;     /* Sequence number */
+	uint8_t seq_frlen;  /* Frame length */
+	uint8_t ctrl_tiface;/* Target interface */
+	uint8_t ctrl_comc;  /* Command code */
+	uint8_t parms[8];   /* Parameters; Number of parameters depends
+				on the frame length */
+	uint8_t chks;       /* Checksum; Bitwise XOR of all bytes except STX */
+} pcl_packet_t;
 
-struct pcl_scheduler_entry_t {
+struct pcl_scheduler_entry {
 	int lin_id;
 	int interval_ms;
-} pcl_scheduler_entry[] = {
-//	{0x3F, 500},
-//	{0x2A, 500},
-	{1, 500},
-	{2, 500},
-	{4, 500},
-	{8, 500},
-	{16, 500}
 };
-
-#define PCL_ACTIVE				1
-#define PCL_UNACTIVE				0
-/* Excerpt from the PCAN-LIN documentation:
-
-	The length of the data depends on the slave ID. If the used frame
-	length is the default, the length to be used can be found using
-	the following table:
-		ID Range        |    Data Length
-	        ----------------+---------------
-		0x00 to 0x1F    |    2 Bytes
-		0x20 to 0x2F    |    4 Bytes
-		0x30 to 0x3F    |    8 Bytes
-
-	If the frame length of the used LIN ID was configured with another
-	length, than that length must be used;
-*/
 
 /* Index in this array = LIN ID */
-struct pcl_publish_entry_t {
+struct pcl_frame_entry {
 	int status; /* 1 = active; 0 = unactive */
 	int data_len;
-	unsigned char data[8];
-} pcl_publish_entry[] = {
-	[0x0] = { PCL_UNACTIVE, 2, {0xff, 0xff} },
-	[0x1] = { PCL_ACTIVE, 2, {0xff, 0xff} },
-	[0x2] = { PCL_UNACTIVE, 2, {0xff, 0xff} },
-	[0x3] = { PCL_UNACTIVE, 2, {0xff, 0xff} },
-	[0x4] = { PCL_UNACTIVE, 2, {0xff, 0xff} },
-	[0x5] = { PCL_UNACTIVE, 2, {0xff, 0xff} },
-	[0x6] = { PCL_UNACTIVE, 2, {0xff, 0xff} },
-	[0x7] = { PCL_UNACTIVE, 2, {0xff, 0xff} },
-	[0x8] = { PCL_UNACTIVE, 2, {0xff, 0xff} },
-	[0x9] = { PCL_UNACTIVE, 2, {0xff, 0xff} },
-	[0xa] = { PCL_UNACTIVE, 2, {0xff, 0xff} },
-	[0xb] = { PCL_UNACTIVE, 2, {0xff, 0xff} },
-	[0xc] = { PCL_UNACTIVE, 2, {0xff, 0xff} },
-	[0xd] = { PCL_UNACTIVE, 2, {0xff, 0xff} },
-	[0xe] = { PCL_UNACTIVE, 2, {0xff, 0xff} },
-	[0xf] = { PCL_UNACTIVE, 2, {0xff, 0xff} },
-	[0x10] = { PCL_UNACTIVE, 2, {0xff, 0xff} },
-	[0x11] = { PCL_UNACTIVE, 2, {0xff, 0xff} },
-	[0x12] = { PCL_UNACTIVE, 2, {0xff, 0xff} },
-	[0x13] = { PCL_UNACTIVE, 2, {0xff, 0xff} },
-	[0x14] = { PCL_UNACTIVE, 2, {0xff, 0xff} },
-	[0x15] = { PCL_UNACTIVE, 2, {0xff, 0xff} },
-	[0x16] = { PCL_UNACTIVE, 2, {0xff, 0xff} },
-	[0x17] = { PCL_UNACTIVE, 2, {0xff, 0xff} },
-	[0x18] = { PCL_UNACTIVE, 2, {0xff, 0xff} },
-	[0x19] = { PCL_UNACTIVE, 2, {0xff, 0xff} },
-	[0x1a] = { PCL_UNACTIVE, 2, {0xff, 0xff} },
-	[0x1b] = { PCL_UNACTIVE, 2, {0xff, 0xff} },
-	[0x1c] = { PCL_UNACTIVE, 2, {0xff, 0xff} },
-	[0x1d] = { PCL_UNACTIVE, 2, {0xff, 0xff} },
-	[0x1e] = { PCL_UNACTIVE, 2, {0xff, 0xff} },
-	[0x1f] = { PCL_UNACTIVE, 2, {0xff, 0xff} },
-
-	[0x20] = { PCL_UNACTIVE, 4, {0xff, 0xff, 0xff, 0xff} },
-	[0x21] = { PCL_UNACTIVE, 4, {0xff, 0xff, 0xff, 0xff} },
-	[0x22] = { PCL_UNACTIVE, 4, {0xff, 0xff, 0xff, 0xff} },
-	[0x23] = { PCL_UNACTIVE, 4, {0xff, 0xff, 0xff, 0xff} },
-	[0x24] = { PCL_UNACTIVE, 4, {0xff, 0xff, 0xff, 0xff} },
-	[0x25] = { PCL_UNACTIVE, 4, {0xff, 0xff, 0xff, 0xff} },
-	[0x26] = { PCL_UNACTIVE, 4, {0xff, 0xff, 0xff, 0xff} },
-	[0x27] = { PCL_UNACTIVE, 4, {0xff, 0xff, 0xff, 0xff} },
-	[0x28] = { PCL_UNACTIVE, 4, {0xff, 0xff, 0xff, 0xff} },
-	[0x29] = { PCL_UNACTIVE, 4, {0xff, 0xff, 0xff, 0xff} },
-	[0x2a] = { PCL_UNACTIVE, 4, {0xff, 0xff, 0xff, 0xff} },
-	[0x2b] = { PCL_UNACTIVE, 4, {0xff, 0xff, 0xff, 0xff} },
-	[0x2c] = { PCL_UNACTIVE, 4, {0xff, 0xff, 0xff, 0xff} },
-	[0x2d] = { PCL_UNACTIVE, 4, {0xff, 0xff, 0xff, 0xff} },
-	[0x2e] = { PCL_UNACTIVE, 4, {0xff, 0xff, 0xff, 0xff} },
-	[0x2f] = { PCL_UNACTIVE, 4, {0xff, 0xff, 0xff, 0xff} },
-
-	[0x30] = { PCL_UNACTIVE, 6, {0xff, 0xff, 0xff, 0xff, 0xff, 0xff} },
-	[0x31] = { PCL_UNACTIVE, 6, {0xff, 0xff, 0xff, 0xff, 0xff, 0xff} },
-	[0x32] = { PCL_UNACTIVE, 6, {0xff, 0xff, 0xff, 0xff, 0xff, 0xff} },
-	[0x33] = { PCL_UNACTIVE, 6, {0xff, 0xff, 0xff, 0xff, 0xff, 0xff} },
-	[0x34] = { PCL_UNACTIVE, 6, {0xff, 0xff, 0xff, 0xff, 0xff, 0xff} },
-	[0x35] = { PCL_UNACTIVE, 6, {0xff, 0xff, 0xff, 0xff, 0xff, 0xff} },
-	[0x36] = { PCL_UNACTIVE, 6, {0xff, 0xff, 0xff, 0xff, 0xff, 0xff} },
-	[0x37] = { PCL_UNACTIVE, 6, {0xff, 0xff, 0xff, 0xff, 0xff, 0xff} },
-	[0x38] = { PCL_UNACTIVE, 6, {0xff, 0xff, 0xff, 0xff, 0xff, 0xff} },
-	[0x39] = { PCL_UNACTIVE, 6, {0xff, 0xff, 0xff, 0xff, 0xff, 0xff} },
-	[0x3a] = { PCL_UNACTIVE, 6, {0xff, 0xff, 0xff, 0xff, 0xff, 0xff} },
-	[0x3b] = { PCL_UNACTIVE, 6, {0xff, 0xff, 0xff, 0xff, 0xff, 0xff} },
-	[0x3c] = { PCL_UNACTIVE, 6, {0xff, 0xff, 0xff, 0xff, 0xff, 0xff} },
-	[0x3d] = { PCL_UNACTIVE, 6, {0xff, 0xff, 0xff, 0xff, 0xff, 0xff} },
-	[0x3e] = { PCL_UNACTIVE, 6, {0xff, 0xff, 0xff, 0xff, 0xff, 0xff} },
-	[0x3f] = { PCL_UNACTIVE, 6, {0xff, 0xff, 0xff, 0xff, 0xff, 0xff} },
+	char data[8];
 };
 
-int pcl_slave_only_fl = false;
+struct pcl_lin_state {
+	int is_active;
+	int baudrate;
+	int master_status;
+	int bus_termination;
+};
+
+struct pcl_lin_state pcl_lin_state;
+struct pcl_frame_entry pcl_frame_entry[MAX_LIN_ID];
+struct pcl_scheduler_entry pcl_scheduler_entry[100]; // FIXME max value
+int pcl_scheduler_entries_cnt;
+
+struct termios term_attr;
 /* ------------------------------------------------------------------------ */
 
 /* Transform 'logic' representation of a frame to exact byte sequence */
@@ -284,7 +208,7 @@ void pcl_insert_scheduler_entries(int tty)
 	int i;
 
 	/* Insert scheduler entry */
-	for (i = 0; i < (sizeof(pcl_scheduler_entry)/sizeof(struct pcl_scheduler_entry_t)); i++) {
+	for (i = 0; i < (sizeof(pcl_scheduler_entry)/sizeof(struct pcl_scheduler_entry)); i++) {
 		pkt.stx = PCL_STX;
 		pkt.seq_no = 0x0;
 		pkt.seq_frlen = 0x3;
@@ -309,22 +233,22 @@ void pcl_set_slave_id_and_data_configuration(int tty)
 	for (i = 0; i < 0x3F; i++) {
 		int len;
 
-		if (pcl_publish_entry[i].status == PCL_ACTIVE) {
+		if (pcl_frame_entry[i].status == PCL_ACTIVE) {
 			pkt.stx = PCL_STX;
 			pkt.seq_no = 0x0;
-			pkt.seq_frlen = pcl_publish_entry[i].data_len + 2;
+			pkt.seq_frlen = pcl_frame_entry[i].data_len + 2;
 			pkt.ctrl_tiface = PCL_PACKET_LIN_IFACE;
 			pkt.ctrl_comc = 0x29;
-			pkt.parms[0] = pcl_publish_entry[i].status; /* Field Status */
+			pkt.parms[0] = pcl_frame_entry[i].status; /* Field Status */
 			pkt.parms[1] = i; /* LIN ID */
-			pkt.parms[2] = pcl_publish_entry[i].data[0]; /* Data */
-			pkt.parms[3] = pcl_publish_entry[i].data[1]; /* Data */
-			pkt.parms[4] = pcl_publish_entry[i].data[2]; /* Data */
-			pkt.parms[5] = pcl_publish_entry[i].data[3]; /* Data */
-			pkt.parms[6] = pcl_publish_entry[i].data[4]; /* Data */
-			pkt.parms[7] = pcl_publish_entry[i].data[5]; /* Data */
-			pkt.parms[8] = pcl_publish_entry[i].data[6]; /* Data */
-			pkt.parms[9] = pcl_publish_entry[i].data[7]; /* Data */
+			pkt.parms[2] = pcl_frame_entry[i].data[0]; /* Data */
+			pkt.parms[3] = pcl_frame_entry[i].data[1]; /* Data */
+			pkt.parms[4] = pcl_frame_entry[i].data[2]; /* Data */
+			pkt.parms[5] = pcl_frame_entry[i].data[3]; /* Data */
+			pkt.parms[6] = pcl_frame_entry[i].data[4]; /* Data */
+			pkt.parms[7] = pcl_frame_entry[i].data[5]; /* Data */
+			pkt.parms[8] = pcl_frame_entry[i].data[6]; /* Data */
+			pkt.parms[9] = pcl_frame_entry[i].data[7]; /* Data */
 
 		} else {
 			if (i < 0x20)
@@ -412,7 +336,7 @@ int pcl_lin_init(int tty)
 	pkt.seq_frlen = 0x1;
 	pkt.ctrl_tiface = PCL_PACKET_LIN_IFACE;
 	pkt.ctrl_comc = 0x1E;
-	pkt.parms[0] = 0x01;
+	pkt.parms[0] = pcl_lin_state.is_active;
 
 	pcl_send_frame(tty, &pkt);
 	pcl_read_response(tty);
@@ -503,7 +427,7 @@ int pcl_lin_init(int tty)
 	pkt.seq_frlen = 0x1;
 	pkt.ctrl_tiface = PCL_PACKET_LIN_IFACE;
 	pkt.ctrl_comc = 0x24;
-	pkt.parms[0] = (pcl_slave_only_fl) ? 0x0 : 0x1;
+	pkt.parms[0] = pcl_lin_state.master_status;
 
 	pcl_send_frame(tty, &pkt);
 	pcl_read_response(tty);
@@ -514,7 +438,7 @@ int pcl_lin_init(int tty)
 	pkt.seq_frlen = 0x1;
 	pkt.ctrl_tiface = PCL_PACKET_LIN_IFACE;
 	pkt.ctrl_comc = 0x25;
-	pkt.parms[0] = (pcl_slave_only_fl) ? 0x0 : 0x1;
+	pkt.parms[0] = pcl_lin_state.bus_termination;
 	/* Should have the same value as "Set master status" */
 
 	pcl_send_frame(tty, &pkt);
@@ -582,11 +506,190 @@ void pcl_explain(int argc, char *argv[])
 	fprintf(stderr, "Options:\n");
 	fprintf(stderr, " -r         Execute only Reset of a device\n");
 	fprintf(stderr, " -f         Flash the active configuration\n");
-	fprintf(stderr, " -s         Activate only LIN Slave node in the device\n");
 	fprintf(stderr, "\n");
 	fprintf(stderr, "Examples:\n");
 	fprintf(stderr, " %s /dev/ttyS0      (Configure the device with the default configuration)\n", argv[0]);
 	fprintf(stderr, " %s -r /dev/ttyS0   (Reset the device)\n", argv[0]);
+}
+
+static inline int pcl_xml_get_prop_int(xmlNodePtr cur, const xmlChar* str)
+{
+	int val;
+	xmlChar *attr;
+
+	attr = xmlGetProp(cur, str);
+	if (!attr)
+		assert(0);
+
+	val = atoi((const char *)attr); // FIXME error handling
+	xmlFree(attr);
+
+	return val;
+}
+
+static inline int pcl_xml_get_element_int(xmlDocPtr doc, xmlNodePtr cur)
+{
+	xmlChar *key;
+	int val;
+
+	key = xmlNodeListGetString(doc, cur->children, 1);
+	if (!key)
+		assert(0);
+
+	val = atoi((const char *)key); // FIXME error handling etc.
+	xmlFree(key);
+
+	return val;
+}
+
+void pcl_parse_scheduler_entries(xmlDocPtr doc, xmlNodePtr cur)
+{
+	cur = cur->children;
+	while (cur) {
+		if (!xmlStrcmp(cur->name, (const xmlChar *)"Entry")) {
+			int linid;
+			int interval;
+			linid = pcl_xml_get_element_int(doc, cur);
+			interval = pcl_xml_get_prop_int(cur, (const xmlChar *)"Time");
+
+			pcl_scheduler_entry[pcl_scheduler_entries_cnt].lin_id = linid;
+			pcl_scheduler_entry[pcl_scheduler_entries_cnt].interval_ms = interval;
+			pcl_scheduler_entries_cnt++;
+
+			//printf("Time = %d Entry = %d\n", interval, linid);
+		}
+		cur = cur->next;
+	}
+}
+
+void pcl_parse_frame_configuration(xmlDocPtr doc, xmlNodePtr cur)
+{
+	xmlNodePtr tmp_node;
+	int val;
+
+	cur = cur->children;
+	while (cur) {
+		if (!xmlStrcmp(cur->name, (const xmlChar *)"Frame")) {
+			tmp_node = cur->children;
+			/* We are able to write into the main Configuration array after
+			parsing of all necessary elements (especially LIN ID) -- store
+			parsed elements in this temporary entry -- copy the entry afterwards */
+			struct pcl_frame_entry tmp_fr_entry;
+			int linid = -1;
+
+			while (tmp_node) {
+				if (!xmlStrcmp(tmp_node->name, (const xmlChar *)"ID")) {
+					val = pcl_xml_get_element_int(doc, tmp_node);
+					linid = val;
+					//printf("ID = %d\n", val);
+				}
+				if (!xmlStrcmp(tmp_node->name, (const xmlChar *)"Length")) {
+					val = pcl_xml_get_element_int(doc, tmp_node);
+					tmp_fr_entry.data_len = val;
+					//printf("Length = %d\n", val);
+				}
+				if (!xmlStrcmp(tmp_node->name, (const xmlChar *)"Active")) {
+					val = pcl_xml_get_element_int(doc, tmp_node);
+					tmp_fr_entry.status = val;
+					//printf("Active = %d\n", val);
+				}
+				if (!xmlStrcmp(tmp_node->name, (const xmlChar *)"Data")) {
+					int indx = 0;
+					xmlNodePtr tmp_node2;
+					tmp_node2 = tmp_node->children;
+					while (tmp_node2) {
+						if (!xmlStrcmp(tmp_node2->name, (const xmlChar *)"Byte")) {
+							// Byte indexing in XML file is wrong
+							//indx = pcl_xml_get_prop_int(tmp_node2,
+							//	(const xmlChar *)"Index");
+							val = pcl_xml_get_element_int(doc, tmp_node2);
+							printf("Data = %d\n", val);
+							snprintf((char *)&tmp_fr_entry.data[indx], 1, "%i", val);
+							indx++;
+						}
+						tmp_node2 = tmp_node2->next;
+					}
+				}
+				tmp_node = tmp_node->next;
+			}
+
+			if (linid >= 0) {
+				memcpy(&pcl_frame_entry[linid], &tmp_fr_entry,
+					sizeof(struct pcl_frame_entry));
+			}
+		}
+		cur = cur->next;
+	}
+}
+
+int pcl_parse_configuration(char *filename)
+{
+	xmlDocPtr doc;
+	xmlNodePtr cur_node;
+
+	if (!filename)
+		filename = "config.pclin";
+
+	xmlKeepBlanksDefault(1);
+	doc = xmlParseFile(filename);
+	if (doc == NULL)
+		return -1;
+
+	cur_node = xmlDocGetRootElement(doc);
+	if (cur_node == NULL) {
+		fprintf(stderr, "Configuration file %s is empty\n", filename);
+		xmlFreeDoc(doc);
+		return -1;
+	}
+
+	/* Check for Root element */
+	if (xmlStrcmp(cur_node->name, (const xmlChar *)"PCLIN_PROFILE"))
+		goto exit_failure;
+
+	/* Check for LIN element */
+	cur_node = cur_node->children;
+	while (cur_node) {
+		if (!xmlStrcmp(cur_node->name, (const xmlChar *)"LIN"))
+			break;
+
+		cur_node = cur_node->next;
+	}
+
+	if (!cur_node)
+		goto exit_failure;
+
+	/* Process LIN configuration */
+	cur_node = cur_node->children;
+	while (cur_node) {
+		if (!xmlStrcmp(cur_node->name, (const xmlChar *)"Active")) {
+			pcl_lin_state.is_active = pcl_xml_get_element_int(doc, cur_node);
+		}
+		if (!xmlStrcmp(cur_node->name, (const xmlChar *)"Baudrate")) {
+			pcl_lin_state.baudrate = pcl_xml_get_element_int(doc, cur_node);
+		}
+		if (!xmlStrcmp(cur_node->name, (const xmlChar *)"Master_Status")) {
+			pcl_lin_state.master_status = pcl_xml_get_element_int(doc, cur_node);
+		}
+		if (!xmlStrcmp(cur_node->name, (const xmlChar *)"Bus_Termination")) {
+			pcl_lin_state.bus_termination = pcl_xml_get_element_int(doc, cur_node);
+		}
+		if (!xmlStrcmp(cur_node->name, (const xmlChar *)"Scheduler_Entries")) {
+			pcl_parse_scheduler_entries(doc, cur_node);
+		}
+		if (!xmlStrcmp(cur_node->name, (const xmlChar *)"Frame_Configuration")) {
+			pcl_parse_frame_configuration(doc, cur_node);
+		}
+
+		cur_node = cur_node->next;
+	}
+
+	xmlFreeDoc(doc);
+	return 0;
+
+exit_failure:
+	fprintf(stderr, "Invalid configuration file\n");
+	xmlFreeDoc(doc);
+	return -1;
 }
 
 int main(int argc, char *argv[])
@@ -597,16 +700,13 @@ int main(int argc, char *argv[])
 	int pcl_reset_device_fl = false;
 	int pcl_flash_config_fl = false;
 
-	while ((opt = getopt(argc, argv, "rfs")) != -1) {
+	while ((opt = getopt(argc, argv, "rf")) != -1) {
 		switch (opt) {
 		case 'r':
 			pcl_reset_device_fl = true;
 			break;
 		case 'f':
 			pcl_flash_config_fl = true;
-			break;
-		case 's':
-			pcl_slave_only_fl = true;
 			break;
 		default:
 			pcl_explain(argc, argv);
@@ -626,6 +726,9 @@ int main(int argc, char *argv[])
 		perror("open()");
 		return -4;
 	}
+
+	pcl_parse_configuration(NULL);
+	return 0;
 
 	/* Configure UART */
 	pcl_set_input_mode(tty);
