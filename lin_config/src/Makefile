@@ -1,2 +1,7 @@
-all: pcan_lin_config.c
-	gcc pcan_lin_config.c -std=gnu99 -Wall -pedantic -o pcan_lin_config
+CC=gcc
+CFLAGS=-std=gnu99 -Wall -pedantic
+
+all: pcan_lin_config
+
+pcan_lin_config: pcan_lin_config.c
+	$(CC) $< $(CFLAGS) -o $@
