@@ -27,27 +27,48 @@
 #include <assert.h>
 #include "linc_parse_xml.h"
 #include "pcl_config.h"
+#include "sllin_config.h"
 #include "lin_config.h"
 
 
 void linc_explain(int argc, char *argv[])
 {
+// FIXME what is default behaviour
+// Write a warning about not using a rs232--usb converter for sllin
 	fprintf(stderr, "Usage: %s [OPTIONS] <SERIAL_INTERFACE>\n", argv[0]);
 	fprintf(stderr, "\n");
-	fprintf(stderr, "'pcan_lin_config' Is used for configuring PEAK PCAN-LIN device.\n");
-	fprintf(stderr, "  When invoked without any OPTIONS, it configures PCAN-LIN device\n");
-	fprintf(stderr, "  with configuration obtained from '"PCL_DEFAULT_CONFIG"' file (if it exists).\n");
-	fprintf(stderr, "  The PCAN-LIN module enables CAN, LIN and serial participants to communicate.\n");
+	fprintf(stderr, "'lin_config' is used for configuring sllin -- " \
+		"simple LIN device implemented\n" \
+		"  as a TTY line discipline for arbitrary UART interface.\n" \
+		"  This program is able to configure PCAN-LIN (RS232 configurable " \
+		"LIN node) as well.\n" \
+		"  When invoked without any OPTIONS, it configures PCAN-LIN device\n" \
+		"  with configuration obtained from '"PCL_DEFAULT_CONFIG"' " \
+		"file (if it exists).\n");
 	fprintf(stderr, "\n");
-	fprintf(stderr, "Options:\n");
+	fprintf(stderr, "SERIAL_INTERFACE is in format CLASS:PATH\n");
+	fprintf(stderr, "  CLASS defines the device class -- it is either " \
+		"'sllin' or 'pcanlin'\n");
+	fprintf(stderr, "  PATH is path to the serial interface, e.g /dev/ttyS0\n");
+	fprintf(stderr, "\n");
+	fprintf(stderr, "General options:\n");
+	fprintf(stderr, " -c <FILE>   Path to XML configuration file in PCLIN format\n");
 	fprintf(stderr, " -r          Execute only Reset of a device\n");
-	fprintf(stderr, " -f          Flash the active configuration\n");
-	fprintf(stderr, " -c <FILE>   Path to XML configuration file\n");
+	fprintf(stderr, "\n");
+	fprintf(stderr, "PCAN-LIN specific options:\n");
+	fprintf(stderr, " -f          Store the active configuration into internal " \
+		"flash memory\n");
+	fprintf(stderr, "\n");
+	fprintf(stderr, "Sllin specific options:\n");
+	fprintf(stderr, " -a          Attach sllin TTY line discipline to " \
+		"particular SERIAL_INTERFACE\n");
+	fprintf(stderr, " -d          Detach sllin TTY line discipline from " \
+		"particular SERIAL_INTERFACE\n");
 	fprintf(stderr, "\n");
 	fprintf(stderr, "Examples:\n");
-	fprintf(stderr, " %s /dev/ttyS0      (Configure the device with the configuration from '"PCL_DEFAULT_CONFIG"')\n",
-		argv[0]);
-	fprintf(stderr, " %s -r /dev/ttyS0   (Reset the device)\n", argv[0]);
+	fprintf(stderr, " %s sllin:/dev/ttyS0        (Configure the device with the " \
+		"configuration from '"PCL_DEFAULT_CONFIG"')\n", argv[0]);
+	fprintf(stderr, " %s -r pcanlin:/dev/ttyS0   (Reset the device)\n", argv[0]);
 }
 
 int main(int argc, char *argv[])
@@ -57,7 +78,7 @@ int main(int argc, char *argv[])
 	int flags = 0;
 	char *filename = NULL;
 
-	while ((opt = getopt(argc, argv, "rfc:")) != -1) {
+	while ((opt = getopt(argc, argv, "rfc:ad")) != -1) {
 		switch (opt) {
 		case 'r':
 			flags |= RESET_DEVICE_fl;
@@ -68,9 +89,15 @@ int main(int argc, char *argv[])
 		case 'c':
 			filename = optarg;
 			break;
+		case 'a':
+			flags |= SLLIN_ATTACH_fl;
+			break;
+		case 'd':
+			flags |= SLLIN_DETACH_fl;
+			break;
 		default:
 			linc_explain(argc, argv);
-			exit(EXIT_FAILURE);
+			return EXIT_FAILURE;
 		}
 	}
 
@@ -86,7 +113,16 @@ int main(int argc, char *argv[])
 	if (!ret)
 		printf("Configuration file %s parsed correctly\n", filename);
 
-	pcl_config(&linc_lin_state, flags);
+	linc_lin_state.flags = flags;
+	//ret = pcl_config(&linc_lin_state);
+	ret = sllin_config(&linc_lin_state);
+
+//	printf("Press any key to detach %s ...\n", linc_lin_state.dev);
+//	getchar();
+
+
+	if (ret < 0)
+		return EXIT_FAILURE;
 
 	return EXIT_SUCCESS;
 }

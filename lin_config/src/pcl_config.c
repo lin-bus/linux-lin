@@ -420,7 +420,7 @@ int pcl_lin_init(int tty, struct linc_lin_state *linc_lin_state)
 	return 0;
 }
 
-int pcl_config(struct linc_lin_state *linc_lin_state, unsigned int flags)
+int pcl_config(struct linc_lin_state *linc_lin_state)
 {
 	int tty;
 
@@ -433,22 +433,24 @@ int pcl_config(struct linc_lin_state *linc_lin_state, unsigned int flags)
 	pcl_set_input_mode(tty);
 
 
-	if (flags & RESET_DEVICE_fl) {
+	if (linc_lin_state->flags & RESET_DEVICE_fl) {
 		pcl_reset_device(tty);
 			return 0;
 	}
 
 	pcl_lin_init(tty, linc_lin_state);
 
-	if (flags & FLASH_CONF_fl) {
+	if (linc_lin_state->flags & FLASH_CONF_fl) {
 		pcl_flash_config(tty);
 		pcl_reset_device(tty);
 	}
+
+	// FIXME add warning on unrecognized flags
+	//if (flags & (RESET_DEVICE_fl | FLASH_CONF_fl))
 
 	pcl_reset_input_mode(tty);
 	close(tty);
 
 	return 0;
 }
-
 

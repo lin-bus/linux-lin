@@ -37,6 +37,6 @@ typedef struct {
 	uint8_t chks;       /* Checksum; Bitwise XOR of all bytes except STX */
 } pcl_packet_t;
 
-int pcl_config(struct linc_lin_state *linc_lin_state, unsigned int flags);
+int pcl_config(struct linc_lin_state *linc_lin_state);
 
 #endif /* _PCL_CONFIG_H_ */

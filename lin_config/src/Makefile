@@ -3,7 +3,7 @@ CFLAGS=-std=gnu99 -Wall -pedantic $(DEBUG) `xml2-config --cflags`
 LIBS=`xml2-config --libs`
 DEBUG=-ggdb
 
-objects = linc_parse_xml.o pcl_config.o lin_config.o
+objects = linc_parse_xml.o pcl_config.o sllin_config.o lin_config.o
 
 lin_config: $(objects)
 	$(CC) $(objects) $(LIBS) -o lin_config

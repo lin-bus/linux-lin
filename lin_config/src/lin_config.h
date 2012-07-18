@@ -3,6 +3,8 @@
 
 #define FLASH_CONF_fl				(1 << 0)
 #define RESET_DEVICE_fl				(1 << 1)
+#define SLLIN_ATTACH_fl				(1 << 2)
+#define SLLIN_DETACH_fl				(1 << 3)
 
 #define MAX_LIN_ID				0x3F
 #define PCL_DEFAULT_CONFIG			"config.pclin"
@@ -20,16 +22,21 @@ struct linc_frame_entry {
 };
 
 struct linc_lin_state {
-	int is_active;
-	int baudrate;
-	int master_status;
-	int bus_termination;
+	int is_active;		/* Is LIN device active */
+	int baudrate;		/* LIN baudrate */
+	int master_status;	/* LIN node type -- Master or Slave */
+	int bus_termination;	/* LIN bus termination in device -- Master or Slave */
 
+	/* Subscriber/publisher table entries */
 	struct linc_frame_entry frame_entry[MAX_LIN_ID];
-	struct linc_scheduler_entry scheduler_entry[100]; // FIXME max value
-	int scheduler_entries_cnt;
+	/* Scheduler table entries */
+	// FIXME max value
+	struct linc_scheduler_entry scheduler_entry[100];
+	int scheduler_entries_cnt; /* No. of configured scheduler entries */
 
-	char *dev;
+	char *dev;		/* Path to LIN device to be configured */
+	int flags;		/* Flags passed to configuration function
+				of particular device */
 };
 struct linc_lin_state linc_lin_state;
 
