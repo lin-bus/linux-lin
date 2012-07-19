@@ -47,7 +47,8 @@ void linc_parse_scheduler_entries(struct linc_lin_state *linc_lin_state, xmlDocP
 			linc_lin_state->scheduler_entry[linc_lin_state->scheduler_entries_cnt].interval_ms = interval;
 			linc_lin_state->scheduler_entries_cnt++;
 
-			//printf("Time = %d Entry = %d\n", interval, linid);
+			//printf("Time = %d Lin ID = %d Entry no. = %d\n",
+			//	interval, linid, linc_lin_state->scheduler_entries_cnt-1);
 		}
 		cur = cur->next;
 	}
@@ -104,7 +105,7 @@ void linc_parse_frame_configuration(struct linc_lin_state *linc_lin_state, xmlDo
 				tmp_node = tmp_node->next;
 			}
 
-			if (linid >= 0) {
+			if (linid >= 0 && linid <= MAX_LIN_ID) {
 				memcpy(&linc_lin_state->frame_entry[linid], &tmp_fr_entry,
 					sizeof(struct linc_frame_entry));
 			}

@@ -8,7 +8,7 @@ objects = linc_parse_xml.o pcl_config.o sllin_config.o lin_config.o
 lin_config: $(objects)
 	$(CC) $(objects) $(LIBS) -o lin_config
 
-%.o : %.c
+%.o : %.c %.h
 	$(CC) $(CFLAGS) $(LIBS) -c $< -o $@
 
 .PHONY: clean

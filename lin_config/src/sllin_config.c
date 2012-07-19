@@ -28,6 +28,19 @@ struct sllin_connection {
 	char iface[IFNAMSIZ+1];
 };
 
+void sllin_ms_to_timeval(int ms, struct timeval *tv)
+{
+	tv->tv_sec = (int) ms/1000;
+	tv->tv_usec = (ms % 1000) * 1000;
+}
+
+int sllin_cache_config(struct linc_lin_state *linc_lin_state,
+			struct sllin_connection *sllin_connection)
+{
+
+	return 0;
+}
+
 int sllin_bcm_config(struct linc_lin_state *linc_lin_state,
 			struct sllin_connection *sllin_connection)
 {
@@ -37,8 +50,6 @@ int sllin_bcm_config(struct linc_lin_state *linc_lin_state,
 	int s;
 	int ret;
 	int i;
-
-	//printf("tty %s to netdevice %s\n", linc_lin_state->dev, sllin_connection->iface);
 
 	s = socket(PF_CAN, SOCK_DGRAM, CAN_BCM);
 	if (s < 0) {
@@ -68,24 +79,29 @@ int sllin_bcm_config(struct linc_lin_state *linc_lin_state,
 	}
 
 	for (i = 0; i < linc_lin_state->scheduler_entries_cnt; i++) {
+		struct timeval time;
 		memset(&msg, 0, sizeof(msg));
+
 		msg.msg_head.nframes = 1;
 		msg.msg_head.opcode = TX_SETUP;
 		msg.msg_head.flags |= SETTIMER | STARTTIMER;
-		//msg.msg_head.ival2.tv_sec =  // FIXME
-		msg.msg_head.ival2.tv_usec =
-			linc_lin_state->scheduler_entry[i].interval_ms * 1000;
-		msg.msg_head.can_id =
-			linc_lin_state->scheduler_entry[i].lin_id | CAN_RTR_FLAG;
+		sllin_ms_to_timeval(
+			linc_lin_state->scheduler_entry[i].interval_ms, &time);
+		msg.msg_head.ival2.tv_sec = time.tv_sec;
+		msg.msg_head.ival2.tv_usec = time.tv_usec;
+		msg.msg_head.can_id = (
+			linc_lin_state->scheduler_entry[i].lin_id | CAN_RTR_FLAG);
 		msg.frame.can_dlc = 0;
+		msg.frame.can_id = msg.msg_head.can_id;
+
+		//printf("tv_sec = %i, tv_usec = %i\n", time.tv_sec, time.tv_usec);
 
 		sendto(s, &msg, sizeof(msg), 0,
 			(struct sockaddr*)&caddr, sizeof(caddr));
-		printf(".\n");
 		//read_response(s); // FIXME
 	}
 
-	close(s);
+	/* Do not close "s" to make BCM configuration running */
 
 	printf("Configuration finished\n");
 	return 0;
@@ -119,7 +135,8 @@ int sllin_config(struct linc_lin_state *linc_lin_state)
 			return -1;
 		}
 
-		printf("Attached tty %s to netdevice %s\n", linc_lin_state->dev, sllin_connection.iface);
+		printf("Attached tty %s to netdevice %s\n",
+			linc_lin_state->dev, sllin_connection.iface);
 	}
 
 	if (linc_lin_state->flags & SLLIN_DETACH_fl) {
@@ -130,15 +147,22 @@ int sllin_config(struct linc_lin_state *linc_lin_state)
 			return -1;
 		}
 
-		printf("Detached sllin line discipline from %s\n", linc_lin_state->dev);
-		return 0;
+		printf("Detached sllin line discipline from %s\n",
+			linc_lin_state->dev);
+
+		close(tty);
+		return LIN_EXIT_OK;
 	}
 
 	ret = sllin_bcm_config(linc_lin_state, &sllin_connection);
+	if (ret < 0)
+		return ret;
 
-	printf("Press any key to detach %s ...\n", linc_lin_state->dev);
-	getchar();
-	close(tty);
+	ret = sllin_cache_config(linc_lin_state, &sllin_connection);
+
+	/* !!! Do not close "tty" to enable newly
+	   configured tty line discipline */
+
 	return ret;
 }
 

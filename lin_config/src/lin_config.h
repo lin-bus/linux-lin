@@ -1,6 +1,9 @@
 #ifndef _LIN_CONFIG_H_
 #define _LIN_CONFIG_H_
 
+#define LIN_EXIT_OK				1
+
+/* Flags passed to configuration functions */
 #define FLASH_CONF_fl				(1 << 0)
 #define RESET_DEVICE_fl				(1 << 1)
 #define SLLIN_ATTACH_fl				(1 << 2)
@@ -28,7 +31,7 @@ struct linc_lin_state {
 	int bus_termination;	/* LIN bus termination in device -- Master or Slave */
 
 	/* Subscriber/publisher table entries */
-	struct linc_frame_entry frame_entry[MAX_LIN_ID];
+	struct linc_frame_entry frame_entry[MAX_LIN_ID + 1];
 	/* Scheduler table entries */
 	// FIXME max value
 	struct linc_scheduler_entry scheduler_entry[100];
@@ -38,7 +41,5 @@ struct linc_lin_state {
 	int flags;		/* Flags passed to configuration function
 				of particular device */
 };
-struct linc_lin_state linc_lin_state;
-
 
 #endif /* _LIN_CONFIG_H_ */

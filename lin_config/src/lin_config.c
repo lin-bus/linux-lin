@@ -30,6 +30,8 @@
 #include "sllin_config.h"
 #include "lin_config.h"
 
+struct linc_lin_state linc_lin_state;
+
 
 void linc_explain(int argc, char *argv[])
 {
@@ -117,12 +119,22 @@ int main(int argc, char *argv[])
 	//ret = pcl_config(&linc_lin_state);
 	ret = sllin_config(&linc_lin_state);
 
-//	printf("Press any key to detach %s ...\n", linc_lin_state.dev);
-//	getchar();
-
-
 	if (ret < 0)
 		return EXIT_FAILURE;
+	if (ret == LIN_EXIT_OK) {
+
+		return EXIT_SUCCESS;
+	}
+
+	printf("Running in background ...\n");
+	ret = daemon(0, 0);
+	if (ret < 0) {
+		perror("daemon()");
+		return EXIT_FAILURE;
+	}
+
+	/* Sleep to keep the line discipline active. */
+	pause();
 
 	return EXIT_SUCCESS;
 }
