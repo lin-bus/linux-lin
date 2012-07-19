@@ -320,8 +320,8 @@ int pcl_lin_init(int tty, struct linc_lin_state *linc_lin_state)
 	pkt.seq_frlen = 0x2;
 	pkt.ctrl_tiface = PCL_PACKET_LIN_IFACE;
 	pkt.ctrl_comc = 0x1F;
-	pkt.parms[0] = 0x00;
-	pkt.parms[1] = 0x4B; /* 19200 kBit/s */
+	pkt.parms[0] = pcl_lin_state.baudrate & 0xFF;
+	pkt.parms[1] = (pcl_lin_state.baudrate >> 8) & 0xFF;
 
 	pcl_send_frame(tty, &pkt);
 	pcl_read_response(tty);
