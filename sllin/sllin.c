@@ -550,7 +550,7 @@ static void sllin_slave_receive_buf(struct tty_struct *tty,
 
 			spin_lock_irqsave(&sl->linfr_lock, flags);
 			/* Is the length of data set in frame cache? */
-			if (sce->frame_fl & LIN_LOC_SLAVE_CACHE) {
+			if (sce->frame_fl & LIN_CACHE_RESPONSE) {
 				sl->rx_expect += sce->dlc;
 				sl->rx_len_unknown = false;
 			} else {
@@ -641,7 +641,7 @@ static int sllin_configure_frame_cache(struct sllin *sl, struct can_frame *cf)
 	unsigned long flags;
 	struct sllin_conf_entry *sce;
 
-	if (!(cf->can_id & LIN_ID_CONF))
+	if (!(cf->can_id & LIN_CTRL_FRAME))
 		return -1;
 
 	sce = &sl->linfr_cache[cf->can_id & LIN_ID_MASK];
@@ -715,8 +715,9 @@ int sllin_setup_msg(struct sllin *sl, int mode, int id,
 	if ((data != NULL) && len) {
 		sl->tx_lim += len;
 		memcpy(sl->tx_buff + SLLIN_BUFF_DATA, data, len);
-		sl->tx_buff[sl->tx_lim++] = sllin_checksum(sl->tx_buff,
+		sl->tx_buff[sl->tx_lim] = sllin_checksum(sl->tx_buff,
 				sl->tx_lim, mode & SLLIN_STPMSG_CHCKSUM_ENH);
+		sl->tx_lim++;
 	}
 	if (len != 0)
 		sl->rx_lim = SLLIN_BUFF_DATA + len + 1;
@@ -1003,7 +1004,7 @@ int sllin_kwthread(void *ptr)
 				spin_lock_irqsave(&sl->linfr_lock, flags);
 
 				/* Is there Slave response in linfr_cache to be sent? */
-				if ((sce->frame_fl & LIN_LOC_SLAVE_CACHE)
+				if ((sce->frame_fl & LIN_CACHE_RESPONSE)
 					&& (sce->dlc > 0)) {
 
 					pr_debug("sllin: Sending LIN response from linfr_cache\n");
