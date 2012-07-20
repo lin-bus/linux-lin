@@ -1,6 +1,6 @@
 CC=gcc
-CFLAGS=-std=gnu99 -Wall -pedantic $(DEBUG) `xml2-config --cflags` -I$(INCLUDE)
-LIBS=`xml2-config --libs`
+CFLAGS=-std=gnu99 -Wall -pedantic $(DEBUG) `xml2-config --cflags` `pkg-config --cflags libnl-route-3.0` -I$(INCLUDE)
+LIBS=`xml2-config --libs` `pkg-config --libs libnl-route-3.0`
 INCLUDE=../../sllin
 DEBUG=-ggdb
 

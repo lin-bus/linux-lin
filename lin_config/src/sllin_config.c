@@ -2,7 +2,8 @@
 #include <sys/socket.h>
 #include <sys/ioctl.h>
 #include <sys/uio.h>
-#include <net/if.h>
+//#include <net/if.h>
+#include <linux/if.h>
 #include <netinet/in.h>
 #include <errno.h>
 #include <string.h>
@@ -10,6 +11,11 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
+
+#include <netlink/netlink.h>
+#include <netlink/cache.h>
+#include <netlink/route/link.h>
+#include <netlink/socket.h>
 
 #include <linux/can.h>
 #include <linux/can/bcm.h>
@@ -33,6 +39,56 @@ void sllin_ms_to_timeval(int ms, struct timeval *tv)
 {
 	tv->tv_sec = (int) ms/1000;
 	tv->tv_usec = (ms % 1000) * 1000;
+}
+
+int sllin_interface_up(struct linc_lin_state *linc_lin_state,
+			struct sllin_connection *sllin_connection)
+{
+	struct nl_sock *s;
+	struct rtnl_link *request;
+	struct nl_cache *cache;
+	struct rtnl_link *link;
+	int ret;
+
+	// Allocate and initialize a new netlink socket
+	s = nl_socket_alloc();
+
+	// Bind and connect the socket to a protocol, NETLINK_ROUTE in this example.
+	nl_connect(s, NETLINK_ROUTE);
+
+	// The first step is to retrieve a list of all available interfaces within
+	// the kernel and put them into a cache.
+	ret = rtnl_link_alloc_cache(s, AF_UNSPEC, &cache);
+	// FIXME errorhandling
+
+	// In a second step, a specific link may be looked up by either interface
+	// index or interface name.
+	link = rtnl_link_get_by_name(cache, sllin_connection->iface);
+
+	// In order to change any attributes of an existing link, we must allocate
+	// a new link to hold the change requests:
+	request = rtnl_link_alloc();
+
+	// We can also shut an interface down administratively
+	//rtnl_link_unset_flags(request, rtnl_link_str2flags("up"));
+	rtnl_link_set_flags(request, rtnl_link_str2flags("up"));
+
+	// Two ways exist to commit this change request, the first one is to
+	// build the required netlink message and send it out in one single
+	// step:
+	rtnl_link_change(s, link, request, 0);
+
+	// An alternative way is to build the netlink message and send it
+	// out yourself using nl_send_auto_complete()
+	// struct nl_msg *msg = rtnl_link_build_change_request(old, request);
+	// nl_send_auto_complete(nl_handle, nlmsg_hdr(msg));
+	// nlmsg_free(msg);
+
+	// After successful usage, the object must be given back to the cache
+	rtnl_link_put(link);
+	nl_socket_free(s);
+
+	return 0;
 }
 
 int sllin_cache_config(struct linc_lin_state *linc_lin_state,
@@ -205,6 +261,10 @@ int sllin_config(struct linc_lin_state *linc_lin_state)
 	}
 
 	ret = sllin_bcm_config(linc_lin_state, &sllin_connection);
+	if (ret < 0)
+		return ret;
+
+	ret = sllin_interface_up(linc_lin_state, &sllin_connection);
 	if (ret < 0)
 		return ret;
 
