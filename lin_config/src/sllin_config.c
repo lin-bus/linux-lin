@@ -15,6 +15,7 @@
 #include <linux/can/bcm.h>
 
 #include "lin_config.h"
+#include "linux/lin_bus.h"
 
 #define SLLIN_LDISC					25
 struct bcm_msg {
@@ -37,7 +38,56 @@ void sllin_ms_to_timeval(int ms, struct timeval *tv)
 int sllin_cache_config(struct linc_lin_state *linc_lin_state,
 			struct sllin_connection *sllin_connection)
 {
+	int i;
+	struct ifreq ifr;
+	struct sockaddr_can addr;
+	struct can_frame frame;
+	int s;
+	int ret;
 
+	/* Create the socket */
+	s = socket(PF_CAN, SOCK_RAW, CAN_RAW);
+	if (s < 0) {
+		perror("socket()");
+		return -1;
+	}
+
+	/* Locate the interface you wish to use */
+	strcpy(ifr.ifr_name, sllin_connection->iface);
+	ioctl(s, SIOCGIFINDEX, &ifr); /* ifr.ifr_ifindex gets filled
+				       * with that device's index */
+
+	/* Select that CAN interface, and bind the socket to it. */
+	addr.can_family = AF_CAN;
+	addr.can_ifindex = ifr.ifr_ifindex;
+	ret = bind(s, (struct sockaddr*)&addr, sizeof(addr));
+	if (ret < 0) {
+		perror("bind()");
+		return -1;
+	}
+
+	for (i = 0; i < 0x3F; i++) {
+		if (linc_lin_state->frame_entry[i].status == 1) { /* Is active */
+			frame.can_dlc = linc_lin_state->frame_entry[i].data_len;
+			frame.can_id = i; /* LIN ID */
+			frame.data[0] = linc_lin_state->frame_entry[i].data[0]; /* Data */
+			frame.data[1] = linc_lin_state->frame_entry[i].data[1]; /* Data */
+			frame.data[2] = linc_lin_state->frame_entry[i].data[2]; /* Data */
+			frame.data[3] = linc_lin_state->frame_entry[i].data[3]; /* Data */
+			frame.data[4] = linc_lin_state->frame_entry[i].data[4]; /* Data */
+			frame.data[5] = linc_lin_state->frame_entry[i].data[5]; /* Data */
+			frame.data[6] = linc_lin_state->frame_entry[i].data[6]; /* Data */
+			frame.data[7] = linc_lin_state->frame_entry[i].data[7]; /* Data */
+
+			frame.can_id |= LIN_CTRL_FRAME | LIN_CACHE_RESPONSE;
+			ret = write(s, &frame, sizeof(frame));
+			printf("configuring frame cache; ret = %d\n", ret);
+			//if (ret ...)
+			//read_response(tty);
+		}
+	}
+
+	close(s);
 	return 0;
 }
 

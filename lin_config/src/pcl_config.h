@@ -4,9 +4,6 @@
 #include <inttypes.h>
 #include "lin_config.h"
 
-#define PCL_ACTIVE				1
-#define PCL_UNACTIVE				0
-
 #define PCL_PKT_MAX_SIZE			16
 #define PCL_HEADERS_SIZE			2 /* There are 2 bytes of headers */
 #define PCL_CHECKSUM_SIZE			1

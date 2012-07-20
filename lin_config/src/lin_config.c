@@ -30,6 +30,8 @@
 #include "sllin_config.h"
 #include "lin_config.h"
 
+#include "linux/lin_bus.h"
+
 struct linc_lin_state linc_lin_state;
 
 
@@ -133,6 +135,7 @@ int main(int argc, char *argv[])
 		return EXIT_FAILURE;
 	}
 
+	// FIXME free() linc_lin_state?
 	/* Sleep to keep the line discipline active. */
 	pause();
 

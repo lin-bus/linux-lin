@@ -206,7 +206,7 @@ void pcl_set_slave_id_and_data_configuration(int tty, struct linc_lin_state *lin
 	for (i = 0; i < 0x3F; i++) {
 		int len;
 
-		if (linc_lin_state->frame_entry[i].status == PCL_ACTIVE) {
+		if (linc_lin_state->frame_entry[i].status == 1) { /* Is Active */
 			pkt.stx = PCL_STX;
 			pkt.seq_no = 0x0;
 			pkt.seq_frlen = linc_lin_state->frame_entry[i].data_len + 2;
