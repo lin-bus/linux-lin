@@ -319,8 +319,7 @@ static void sllin_write_wakeup(struct tty_struct *tty)
 	} while (unlikely(test_bit(SLF_TXBUFF_RQ, &sl->flags)));
 
 	if ((remains > 0) && (actual >= 0)) {
-		pr_debug("sllin: sllin_write_wakeup sent %d, "
-			"remains %d, waiting\n",
+		pr_debug("sllin: sllin_write_wakeup sent %d, remains %d, waiting\n",
 			sl->tx_cnt, sl->tx_lim - sl->tx_cnt);
 		return;
 	}
@@ -348,11 +347,11 @@ static netdev_tx_t sll_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	spin_lock(&sl->lock);
 	if (!netif_running(dev))  {
-		printk(KERN_WARNING "%s: xmit: iface is down\n", dev->name);
+		pr_warn("%s: xmit: iface is down\n", dev->name);
 		goto err_out_unlock;
 	}
 	if (sl->tty == NULL) {
-		printk(KERN_WARNING "%s: xmit: no tty device connected\n", dev->name);
+		pr_warn("%s: xmit: no tty device connected\n", dev->name);
 		goto err_out_unlock;
 	}
 
@@ -644,8 +643,8 @@ static int sllin_configure_frame_cache(struct sllin *sl, struct can_frame *cf)
 		return -1;
 
 	sce = &sl->linfr_cache[cf->can_id & LIN_ID_MASK];
-	pr_debug("sllin: Setting frame cache with EFF CAN frame. "
-		"LIN ID = %d\n", cf->can_id & LIN_ID_MASK);
+	pr_debug("sllin: Setting frame cache with EFF CAN frame. LIN ID = %d\n",
+		cf->can_id & LIN_ID_MASK);
 
 	spin_lock_irqsave(&sl->linfr_lock, flags);
 
@@ -1134,8 +1133,7 @@ slstate_response_wait:
 				sllin_report_error(sl, LIN_ERR_CHECKSUM);
 			} else {
 				/* Send CAN non-RTR frame with data */
-				pr_debug("sllin: sending NON-RTR CAN"
-					"frame with LIN payload.");
+				pr_debug("sllin: sending NON-RTR CAN frame with LIN payload.");
 				sll_bump(sl); /* send packet to the network layer */
 			}
 
@@ -1431,14 +1429,14 @@ static int __init sllin_init(void)
 
 	sllin_devs = kzalloc(sizeof(struct net_device *)*maxdev, GFP_KERNEL);
 	if (!sllin_devs) {
-		printk(KERN_ERR "sllin: can't allocate sllin device array!\n");
+		pr_err("sllin: can't allocate sllin device array!\n");
 		return -ENOMEM;
 	}
 
 	/* Fill in our line protocol discipline, and register it */
 	status = tty_register_ldisc(N_SLLIN, &sll_ldisc);
 	if (status)  {
-		printk(KERN_ERR "sllin: can't register line discipline\n");
+		pr_err("sllin: can't register line discipline\n");
 		kfree(sllin_devs);
 	}
 
@@ -1494,7 +1492,7 @@ static void __exit sllin_exit(void)
 
 		sl = netdev_priv(dev);
 		if (sl->tty) {
-			printk(KERN_ERR "%s: tty discipline still running\n",
+			pr_err("%s: tty discipline still running\n",
 			       dev->name);
 			/* Intentionally leak the control block. */
 			dev->destructor = NULL;
@@ -1508,7 +1506,7 @@ static void __exit sllin_exit(void)
 
 	i = tty_unregister_ldisc(N_SLLIN);
 	if (i)
-		printk(KERN_ERR "sllin: can't unregister ldisc (err %d)\n", i);
+		pr_err("sllin: can't unregister ldisc (err %d)\n", i);
 }
 
 module_init(sllin_init);
