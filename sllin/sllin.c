@@ -46,7 +46,6 @@
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 
-#include <asm/system.h>
 #include <linux/uaccess.h>
 #include <linux/bitops.h>
 #include <linux/string.h>
@@ -80,7 +79,7 @@ MODULE_AUTHOR("Pavel Pisa <pisa@cmp.felk.cvut.cz>");
 #define SLLIN_MAGIC		0x53CA
 /* #define BREAK_BY_BAUD */
 
-static int master = true;
+static bool master = true;
 static int baudrate; /* Use LIN_DEFAULT_BAUDRATE when not set */
 
 module_param(master, bool, 0);
@@ -445,7 +444,7 @@ static void sll_setup(struct net_device *dev)
 
 	/* New-style flags. */
 	dev->flags		= IFF_NOARP;
-	dev->features           = NETIF_F_NO_CSUM;
+	dev->features           = NETIF_F_HW_CSUM; /* NETIF_F_NO_CSUM;*/
 }
 
 /******************************************
