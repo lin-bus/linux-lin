@@ -34,7 +34,6 @@
 
 struct linc_lin_state linc_lin_state;
 
-
 void linc_explain(int argc, char *argv[])
 {
 // FIXME what is default behaviour
@@ -57,11 +56,11 @@ void linc_explain(int argc, char *argv[])
 	fprintf(stderr, "\n");
 	fprintf(stderr, "General options:\n");
 	fprintf(stderr, " -c <FILE>   Path to XML configuration file in PCLIN format\n");
-	fprintf(stderr, " -r          Execute only Reset of a device\n");
 	fprintf(stderr, "\n");
 	fprintf(stderr, "PCAN-LIN specific options:\n");
 	fprintf(stderr, " -f          Store the active configuration into internal " \
 		"flash memory\n");
+	fprintf(stderr, " -r          Execute only Reset of a device\n");
 	fprintf(stderr, "\n");
 	fprintf(stderr, "Sllin specific options:\n");
 	fprintf(stderr, " -a          Attach sllin TTY line discipline to " \
@@ -79,6 +78,7 @@ int main(int argc, char *argv[])
 {
 	int ret;
 	int opt;
+	char *c;
 	int flags = 0;
 	char *filename = NULL;
 
@@ -104,30 +104,41 @@ int main(int argc, char *argv[])
 			return EXIT_FAILURE;
 		}
 	}
+	linc_lin_state.flags = flags;
 
 	/* Expected argument after options */
 	if (optind >= argc) {
 		linc_explain(argc, argv);
-		exit(EXIT_FAILURE);
+		return EXIT_FAILURE;
 	}
-
-	linc_lin_state.dev = strdup(argv[optind]);
 
 	ret = linc_parse_configuration(filename, &linc_lin_state);
 	if (!ret)
 		printf("Configuration file %s parsed correctly\n", filename);
 
-	linc_lin_state.flags = flags;
-	//ret = pcl_config(&linc_lin_state);
-	ret = sllin_config(&linc_lin_state);
+	/* Parse device type and path */
+	c = argv[optind]; /* "devtype:devpath" */
+	while ((*c != ':') && (*c != '\0')) {
+		c++;
+	}
+	*c = '\0'; /* In case we found ":" split the string into two */
+	linc_lin_state.dev = strdup(c + 1); /* Second half of the string -- device name */
+
+	if (!strcmp("pcanlin", argv[optind])) {
+		ret = pcl_config(&linc_lin_state);
+	} else if (!strcmp("sllin", argv[optind])) {
+		ret = sllin_config(&linc_lin_state);
+	} else {
+		fprintf(stderr, "Device type is missing. Using default device -- sllin.\n");
+		ret = sllin_config(&linc_lin_state);
+	}
 
 	if (ret < 0)
 		return EXIT_FAILURE;
-	if (ret == LIN_EXIT_OK) {
-
+	if (ret == LIN_EXIT_OK) /* Do not daemonize */
 		return EXIT_SUCCESS;
-	}
 
+	/* Run as daemon -- this is needed for attaching sllin TTY line discipline */
 	printf("Running in background ...\n");
 	ret = daemon(0, 0);
 	if (ret < 0) {
