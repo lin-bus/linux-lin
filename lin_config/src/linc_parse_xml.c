@@ -1,47 +1,79 @@
 #include <libxml/parser.h>
 #include <assert.h>
 #include <string.h>
+#include <errno.h>
 #include "lin_config.h"
 
-static inline int linc_xml_get_prop_int(xmlNodePtr cur, const xmlChar* str)
+/**
+* @val -- ptr to int where the int value will be saved
+* @cur -- xmlNodePtr
+* @str -- Property name (string)
+*/
+static inline int linc_xml_get_prop_int(int *val, xmlNodePtr cur, const xmlChar* str)
 {
-	int val;
 	xmlChar *attr;
+	char *endptr;
 
 	attr = xmlGetProp(cur, str);
 	if (!attr)
 		assert(0);
 
-	val = atoi((const char *)attr); // FIXME error handling
-	xmlFree(attr);
+	errno = 0;
+	*val = strtol((const char *)attr, &endptr, 10);
+	if ((char *)attr == endptr)
+		return -1;
+	if (errno != 0) {
+		perror("strtol()");
+		return -1;
+	}
 
-	return val;
+	xmlFree(attr);
+	return 0;
 }
 
-static inline int linc_xml_get_element_int(xmlDocPtr doc, xmlNodePtr cur)
+/**
+* @val -- ptr to int where the int value will be saved
+* @doc -- xmlDocPtr
+* @cur -- xmlNodePtr
+*/
+static inline int linc_xml_get_element_int(int *val, xmlDocPtr doc, xmlNodePtr cur)
 {
 	xmlChar *key;
-	int val;
+	char *endptr;
 
 	key = xmlNodeListGetString(doc, cur->children, 1);
 	if (!key)
 		assert(0);
 
-	val = atoi((const char *)key); // FIXME error handling etc.
+	errno = 0;
+	*val = strtol((const char *)key, &endptr, 10);
+	if ((char *)key == endptr)
+		return -1;
+	if (errno != 0) {
+		perror("strtol()");
+		return -1;
+	}
 	xmlFree(key);
 
-	return val;
+	return 0;
 }
 
-void linc_parse_scheduler_entries(struct linc_lin_state *linc_lin_state, xmlDocPtr doc, xmlNodePtr cur)
+int linc_parse_scheduler_entries(struct linc_lin_state *linc_lin_state, xmlDocPtr doc, xmlNodePtr cur)
 {
 	cur = cur->children;
 	while (cur) {
 		if (!xmlStrcmp(cur->name, (const xmlChar *)"Entry")) {
+			int ret;
 			int linid;
 			int interval;
-			linid = linc_xml_get_element_int(doc, cur);
-			interval = linc_xml_get_prop_int(cur, (const xmlChar *)"Time");
+
+			ret = linc_xml_get_element_int(&linid, doc, cur);
+			if (ret < 0)
+				return ret;
+
+			ret = linc_xml_get_prop_int(&interval, cur, (const xmlChar *)"Time");
+			if (ret < 0)
+				return ret;
 
 			linc_lin_state->scheduler_entry[linc_lin_state->scheduler_entries_cnt].lin_id = linid;
 			linc_lin_state->scheduler_entry[linc_lin_state->scheduler_entries_cnt].interval_ms = interval;
@@ -52,9 +84,10 @@ void linc_parse_scheduler_entries(struct linc_lin_state *linc_lin_state, xmlDocP
 		}
 		cur = cur->next;
 	}
+	return 0;
 }
 
-void linc_parse_frame_configuration(struct linc_lin_state *linc_lin_state, xmlDocPtr doc, xmlNodePtr cur)
+int linc_parse_frame_configuration(struct linc_lin_state *linc_lin_state, xmlDocPtr doc, xmlNodePtr cur)
 {
 	xmlNodePtr tmp_node;
 	int val;
@@ -68,20 +101,28 @@ void linc_parse_frame_configuration(struct linc_lin_state *linc_lin_state, xmlDo
 			parsed elements in this temporary entry -- copy the entry afterwards */
 			struct linc_frame_entry tmp_fr_entry;
 			int linid = -1;
+			int ret;
 
 			while (tmp_node) {
 				if (!xmlStrcmp(tmp_node->name, (const xmlChar *)"ID")) {
-					val = linc_xml_get_element_int(doc, tmp_node);
-					linid = val;
-					//printf("ID = %d\n", val);
+					ret = linc_xml_get_element_int(&linid, doc, tmp_node);
+					//printf("ID = %d\n", linid);
+					if (ret < 0)
+						return ret;
 				}
 				if (!xmlStrcmp(tmp_node->name, (const xmlChar *)"Length")) {
-					val = linc_xml_get_element_int(doc, tmp_node);
+					ret = linc_xml_get_element_int(&val, doc, tmp_node);
+					if (ret < 0)
+						return ret;
+
 					tmp_fr_entry.data_len = val;
 					//printf("Length = %d\n", val);
 				}
 				if (!xmlStrcmp(tmp_node->name, (const xmlChar *)"Active")) {
-					val = linc_xml_get_element_int(doc, tmp_node);
+					ret = linc_xml_get_element_int(&val, doc, tmp_node);
+					if (ret < 0)
+						return ret;
+
 					tmp_fr_entry.status = val;
 					//printf("Active = %d\n", val);
 				}
@@ -92,9 +133,12 @@ void linc_parse_frame_configuration(struct linc_lin_state *linc_lin_state, xmlDo
 					while (tmp_node2) {
 						if (!xmlStrcmp(tmp_node2->name, (const xmlChar *)"Byte")) {
 							// Byte indexing in XML file is wrong
-							//indx = linc_xml_get_prop_int(tmp_node2,
+							//ret = linc_xml_get_prop_int(&index, tmp_node2,
 							//	(const xmlChar *)"Index");
-							val = linc_xml_get_element_int(doc, tmp_node2);
+							ret = linc_xml_get_element_int(&val, doc, tmp_node2);
+							if (ret < 0)
+								return ret;
+
 							//printf("Data = %d\n", val);
 							snprintf((char *)&tmp_fr_entry.data[indx], 1, "%i", val);
 							indx++;
@@ -112,10 +156,14 @@ void linc_parse_frame_configuration(struct linc_lin_state *linc_lin_state, xmlDo
 		}
 		cur = cur->next;
 	}
+
+	return 0;
 }
 
 int linc_parse_configuration(char *filename, struct linc_lin_state *linc_lin_state)
 {
+	int val;
+	int ret;
 	xmlDocPtr doc;
 	xmlNodePtr cur_node;
 
@@ -154,22 +202,42 @@ int linc_parse_configuration(char *filename, struct linc_lin_state *linc_lin_sta
 	cur_node = cur_node->children;
 	while (cur_node) {
 		if (!xmlStrcmp(cur_node->name, (const xmlChar *)"Active")) {
-			linc_lin_state->is_active = linc_xml_get_element_int(doc, cur_node);
+			ret = linc_xml_get_element_int(&val, doc, cur_node);
+			if (ret < 0)
+				goto exit_failure;
+
+			linc_lin_state->is_active = val;
 		}
 		if (!xmlStrcmp(cur_node->name, (const xmlChar *)"Baudrate")) {
-			linc_lin_state->baudrate = linc_xml_get_element_int(doc, cur_node);
+			ret = linc_xml_get_element_int(&val, doc, cur_node);
+			if (ret < 0)
+				goto exit_failure;
+
+			linc_lin_state->baudrate = val;
 		}
 		if (!xmlStrcmp(cur_node->name, (const xmlChar *)"Master_Status")) {
-			linc_lin_state->master_status = linc_xml_get_element_int(doc, cur_node);
+			ret = linc_xml_get_element_int(&val, doc, cur_node);
+			if (ret < 0)
+				goto exit_failure;
+
+			linc_lin_state->master_status = val;
 		}
 		if (!xmlStrcmp(cur_node->name, (const xmlChar *)"Bus_Termination")) {
-			linc_lin_state->bus_termination = linc_xml_get_element_int(doc, cur_node);
+			ret = linc_xml_get_element_int(&val, doc, cur_node);
+			if (ret < 0)
+				goto exit_failure;
+
+			linc_lin_state->bus_termination = val;
 		}
 		if (!xmlStrcmp(cur_node->name, (const xmlChar *)"Scheduler_Entries")) {
-			linc_parse_scheduler_entries(linc_lin_state, doc, cur_node);
+			ret = linc_parse_scheduler_entries(linc_lin_state, doc, cur_node);
+			if (ret < 0)
+				goto exit_failure;
 		}
 		if (!xmlStrcmp(cur_node->name, (const xmlChar *)"Frame_Configuration")) {
-			linc_parse_frame_configuration(linc_lin_state, doc, cur_node);
+			ret = linc_parse_frame_configuration(linc_lin_state, doc, cur_node);
+			if (ret < 0)
+				goto exit_failure;
 		}
 
 		cur_node = cur_node->next;
