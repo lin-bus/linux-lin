@@ -36,41 +36,32 @@ struct linc_lin_state linc_lin_state;
 
 void linc_explain(int argc, char *argv[])
 {
-// FIXME what is default behaviour
-// Write a warning about not using a rs232--usb converter for sllin
 	fprintf(stderr, "Usage: %s [OPTIONS] <SERIAL_INTERFACE>\n", argv[0]);
 	fprintf(stderr, "\n");
-	fprintf(stderr, "'lin_config' is used for configuring sllin -- " \
-		"simple LIN device implemented\n" \
-		"  as a TTY line discipline for arbitrary UART interface.\n" \
-		"  This program is able to configure PCAN-LIN (RS232 configurable " \
-		"LIN node) as well.\n" \
-		"  When invoked without any OPTIONS, it configures PCAN-LIN device\n" \
-		"  with configuration obtained from '"PCL_DEFAULT_CONFIG"' " \
-		"file (if it exists).\n");
+	fprintf(stderr, "'lin_config' is used for configuring sllin -- simple LIN device implemented\n");
+	fprintf(stderr, "  as a TTY line discipline for arbitrary UART interface (works only on\n");
+	fprintf(stderr, "  built-in interfaces -- not on USB to RS232 convertors).\n");
+	fprintf(stderr, "  This program is able to configure PCAN-LIN (RS232 configurable LIN node) as well.\n");
 	fprintf(stderr, "\n");
 	fprintf(stderr, "SERIAL_INTERFACE is in format CLASS:PATH\n");
-	fprintf(stderr, "  CLASS defines the device class -- it is either " \
-		"'sllin' or 'pcanlin'\n");
-	fprintf(stderr, "  PATH is path to the serial interface, e.g /dev/ttyS0\n");
+	fprintf(stderr, "  CLASS     defines the device class -- it is either 'sllin' or 'pcanlin'\n");
+	fprintf(stderr, "            (when not set, default is 'sllin')\n");
+	fprintf(stderr, "  PATH      is path to the serial interface, e.g /dev/ttyS0\n");
 	fprintf(stderr, "\n");
 	fprintf(stderr, "General options:\n");
-	fprintf(stderr, " -c <FILE>   Path to XML configuration file in PCLIN format\n");
+	fprintf(stderr, " -c <FILE>  Path to XML configuration file in PCLIN format\n");
+	fprintf(stderr, "            If this parameter is not set, file '"PCL_DEFAULT_CONFIG"' is used\n");
 	fprintf(stderr, "\n");
 	fprintf(stderr, "PCAN-LIN specific options:\n");
-	fprintf(stderr, " -f          Store the active configuration into internal " \
-		"flash memory\n");
-	fprintf(stderr, " -r          Execute only Reset of a device\n");
+	fprintf(stderr, " -f         Store the active configuration into internal flash memory\n");
+	fprintf(stderr, " -r         Execute only Reset of a device\n");
 	fprintf(stderr, "\n");
 	fprintf(stderr, "Sllin specific options:\n");
-	fprintf(stderr, " -a          Attach sllin TTY line discipline to " \
-		"particular SERIAL_INTERFACE\n");
-	fprintf(stderr, " -d          Detach sllin TTY line discipline from " \
-		"particular SERIAL_INTERFACE\n");
+	fprintf(stderr, " -a         Attach sllin TTY line discipline to particular SERIAL_INTERFACE\n");
+//	fprintf(stderr, " -d         Detach sllin TTY line discipline from particular SERIAL_INTERFACE\n");
 	fprintf(stderr, "\n");
 	fprintf(stderr, "Examples:\n");
-	fprintf(stderr, " %s sllin:/dev/ttyS0        (Configure the device with the " \
-		"configuration from '"PCL_DEFAULT_CONFIG"')\n", argv[0]);
+	fprintf(stderr, " %s sllin:/dev/ttyS0        (Configure the device with the configuration from '"PCL_DEFAULT_CONFIG"')\n", argv[0]);
 	fprintf(stderr, " %s -r pcanlin:/dev/ttyS0   (Reset the device)\n", argv[0]);
 }
 
@@ -128,7 +119,7 @@ int main(int argc, char *argv[])
 		ret = pcl_config(&linc_lin_state);
 	} else if (!strcmp("sllin", argv[optind])) {
 		ret = sllin_config(&linc_lin_state);
-	} else {
+	} else { /* Default */
 		fprintf(stderr, "Device type is missing. Using default device -- sllin.\n");
 		ret = sllin_config(&linc_lin_state);
 	}
