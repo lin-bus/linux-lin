@@ -609,7 +609,7 @@ static void sllin_receive_buf(struct tty_struct *tty,
  * @sl:
  * @err: Error flag to be sent.
  */
-void sllin_report_error(struct sllin *sl, int err)
+static void sllin_report_error(struct sllin *sl, int err)
 {
 	switch (err) {
 	case LIN_ERR_CHECKSUM:
@@ -694,7 +694,7 @@ static inline unsigned sllin_checksum(unsigned char *data, int length, int enhan
 #define SLLIN_STPMSG_CHCKSUM_CLS	(1 << 1)
 #define SLLIN_STPMSG_CHCKSUM_ENH	(1 << 2)
 
-int sllin_setup_msg(struct sllin *sl, int mode, int id,
+static int sllin_setup_msg(struct sllin *sl, int mode, int id,
 		unsigned char *data, int len)
 {
 	if (id > LIN_ID_MASK)
@@ -736,7 +736,7 @@ static void sllin_reset_buffs(struct sllin *sl)
 	sl->data_to_send = false;
 }
 
-int sllin_send_tx_buff(struct sllin *sl)
+static int sllin_send_tx_buff(struct sllin *sl)
 {
 	struct tty_struct *tty = sl->tty;
 	int remains;
@@ -795,7 +795,7 @@ error_in_write:
 }
 
 #ifdef BREAK_BY_BAUD
-int sllin_send_break(struct sllin *sl)
+static int sllin_send_break(struct sllin *sl)
 {
 	struct tty_struct *tty = sl->tty;
 	unsigned long break_baud;
@@ -820,7 +820,7 @@ int sllin_send_break(struct sllin *sl)
 }
 #else /* BREAK_BY_BAUD */
 
-int sllin_send_break(struct sllin *sl)
+static int sllin_send_break(struct sllin *sl)
 {
 	struct tty_struct *tty = sl->tty;
 	int retval;
@@ -916,7 +916,7 @@ static int sllin_rx_validate(struct sllin *sl)
  *  sllin_kwthread - kernel worker thread
  *****************************************/
 
-int sllin_kwthread(void *ptr)
+static int sllin_kwthread(void *ptr)
 {
 	struct sllin *sl = (struct sllin *)ptr;
 	struct tty_struct *tty = sl->tty;
