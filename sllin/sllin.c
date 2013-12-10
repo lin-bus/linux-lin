@@ -550,7 +550,7 @@ static void sllin_slave_receive_buf(struct tty_struct *tty,
 
 			/* Is the length of data set in frame cache? */
 			if (sce->frame_fl & LIN_CACHE_RESPONSE) {
-				sl->rx_expect += sce->dlc;
+				sl->rx_expect += sce->dlc + 1; /* + checksum */
 				sl->rx_len_unknown = false;
 			} else {
 				sl->rx_expect += SLLIN_DATA_MAX + 1; /* + checksum */
