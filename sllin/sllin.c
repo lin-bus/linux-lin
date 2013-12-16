@@ -768,7 +768,7 @@ static void sllin_slave_receive_buf(struct tty_struct *tty,
 
 			sl->lin_state = SLSTATE_ID_RECEIVED;
 			/* Is the length of data set in frame cache? */
-			if (sce->frame_fl & LIN_CACHE_RESPONSE) {
+			if (sce->dlc > 0) {
 				sl->rx_expect += sce->dlc + 1; /* + checksum */
 				sl->rx_len_unknown = false;
 				set_bit(SLF_MSGEVENT, &sl->flags);
