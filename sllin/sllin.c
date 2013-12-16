@@ -62,6 +62,7 @@
 #include <linux/can.h>
 #include <linux/kthread.h>
 #include <linux/hrtimer.h>
+#include <linux/version.h>
 #include "linux/lin_bus.h"
 
 /* Should be in include/linux/tty.h */
@@ -206,22 +207,31 @@ const unsigned char sllin_id_parity_table[] = {
  */
 static int sltty_change_speed(struct tty_struct *tty, unsigned speed)
 {
-	struct ktermios old_termios;
+	struct ktermios old_termios, termios;
 	int cflag;
 
 	mutex_lock(&tty->termios_mutex);
 
-	old_termios = *(tty->termios);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 7, 0)
+	old_termios = termios = *(tty->termios);
+#else
+	old_termios = termios = tty->termios;
+#endif
 
 	cflag = CS8 | CREAD | CLOCAL | HUPCL;
 	cflag &= ~(CBAUD | CIBAUD);
 	cflag |= BOTHER;
-	tty->termios->c_cflag = cflag;
-	tty->termios->c_oflag = 0;
-	tty->termios->c_lflag = 0;
+	termios.c_cflag = cflag;
+	termios.c_oflag = 0;
+	termios.c_lflag = 0;
 
 	/* Enable interrupt when UART-Break or Framing error received */
-	tty->termios->c_iflag = BRKINT | INPCK;
+	termios.c_iflag = BRKINT | INPCK;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 7, 0)
+	*(tty->termios) = termios;
+#else
+	tty->termios = termios;
+#endif
 
 	tty_encode_baud_rate(tty, speed, speed);
 
