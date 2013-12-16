@@ -716,10 +716,12 @@ static void sllin_slave_receive_buf(struct tty_struct *tty,
 		if (fp && *fp++) {
 			/*
 			 * If we don't know the length of the current message
-			 * we received the break of the next message.
-			 * Evaluate the previous one before continuing
+			 * and received at least the LIN ID, we received here
+			 * the break of the next message.
+			 * Evaluate the previous one before continuing.
 			 */
-			if (sl->rx_len_unknown == true)
+			if ((sl->rx_len_unknown == true) &&
+				(sl->rx_cnt >= SLLIN_BUFF_ID))
 			{
 				hrtimer_cancel(&sl->rx_timer);
 				sllin_slave_finish_rx_msg(sl);
