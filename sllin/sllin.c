@@ -1241,8 +1241,6 @@ slstate_response_wait:
 					sllin_send_tx_buff(sl);
 				}
 
-				kfree_skb(sl->tx_req_skb);
-				netif_wake_queue(sl->dev);
 				hrtimer_start(&sl->rx_timer,
 					ktime_add(ktime_get(), sl->rx_timer_timeout),
 					HRTIMER_MODE_ABS);
