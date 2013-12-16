@@ -771,7 +771,6 @@ static void sllin_slave_receive_buf(struct tty_struct *tty,
 			if (sce->dlc > 0) {
 				sl->rx_expect += sce->dlc + 1; /* + checksum */
 				sl->rx_len_unknown = false;
-				set_bit(SLF_MSGEVENT, &sl->flags);
 				wake_up(&sl->kwt_wq);
 			} else {
 				sl->rx_expect += SLLIN_DATA_MAX + 1; /* + checksum */
@@ -1001,9 +1000,9 @@ static int sllin_kwthread(void *ptr)
 			test_bit(SLF_TXEVENT, &sl->flags) ||
 			test_bit(SLF_TMOUTEVENT, &sl->flags) ||
 			test_bit(SLF_ERROR, &sl->flags) ||
+			(sl->lin_state == SLSTATE_ID_RECEIVED) ||
 			(((sl->lin_state == SLSTATE_IDLE) ||
-				(sl->lin_state == SLSTATE_RESPONSE_WAIT) ||
-				(sl->lin_state == SLSTATE_ID_RECEIVED))
+				(sl->lin_state == SLSTATE_RESPONSE_WAIT))
 				&& test_bit(SLF_MSGEVENT, &sl->flags)));
 
 		if (test_and_clear_bit(SLF_RXEVENT, &sl->flags)) {
@@ -1201,8 +1200,7 @@ slstate_response_wait:
 			spin_lock_irqsave(&sl->linfr_lock, flags);
 
 			if ((sce->frame_fl & LIN_CACHE_RESPONSE)
-					&& (sce->dlc > 0)
-					&& (test_bit(SLF_MSGEVENT, &sl->flags))) {
+					&& (sce->dlc > 0)) {
 				int mode;
 
 				netdev_dbg(sl->dev, "Sending LIN response from linfr_cache\n");
@@ -1234,7 +1232,6 @@ slstate_response_wait:
 					sllin_send_tx_buff(sl);
 				}
 
-				clear_bit(SLF_MSGEVENT, &sl->flags);
 				kfree_skb(sl->tx_req_skb);
 				netif_wake_queue(sl->dev);
 				hrtimer_start(&sl->rx_timer,
