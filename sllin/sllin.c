@@ -517,6 +517,9 @@ static void sllin_master_receive_buf(struct tty_struct *tty,
  */
 static void sllin_report_error(struct sllin *sl, int err)
 {
+	unsigned char *lin_buff;
+	int lin_id;
+
 	switch (err) {
 	case LIN_ERR_CHECKSUM:
 		sl->dev->stats.rx_crc_errors++;
@@ -531,7 +534,9 @@ static void sllin_report_error(struct sllin *sl, int err)
 		break;
 	}
 
-	sllin_send_canfr(sl, 0 | CAN_EFF_FLAG |
+	lin_buff = (sl->lin_master) ? sl->tx_buff : sl->rx_buff;
+	lin_id = lin_buff[SLLIN_BUFF_ID] & LIN_ID_MASK;
+	sllin_send_canfr(sl, lin_id | CAN_EFF_FLAG |
 		(err & ~LIN_ID_MASK), NULL, 0);
 }
 
