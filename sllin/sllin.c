@@ -949,7 +949,16 @@ static enum hrtimer_restart sllin_rx_timeout_handler(struct hrtimer *hrtimer)
 {
 	struct sllin *sl = container_of(hrtimer, struct sllin, rx_timer);
 
-	if (sl->lin_master) {
+	/*
+	 * Signal timeout when:
+	 * master: We did not receive as much characters as expected
+	 * slave: * we did not receive any data bytes at all
+	 *        * we know the length and didn't receive enough
+	 */
+	if ((sl->lin_master) ||
+			(sl->rx_cnt <= SLLIN_BUFF_DATA) ||
+			((!sl->rx_len_unknown) &&
+			(sl->rx_cnt < sl->rx_expect))) {
 		sllin_report_error(sl, LIN_ERR_RX_TIMEOUT);
 		set_bit(SLF_TMOUTEVENT, &sl->flags);
 	} else {
