@@ -1216,7 +1216,7 @@ slstate_response_wait:
 				tx_bytes = lin_dlc;
 
 				mode = SLLIN_STPMSG_RESPONLY;
-				if (sl->rx_buff[SLLIN_BUFF_ID] & LIN_CHECKSUM_EXTENDED)
+				if (sce->frame_fl & LIN_CHECKSUM_EXTENDED)
 					mode |= SLLIN_STPMSG_CHCKSUM_ENH;
 
 				if (sllin_setup_msg(sl, mode, lin_id & LIN_ID_MASK,
