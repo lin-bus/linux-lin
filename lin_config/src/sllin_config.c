@@ -123,24 +123,24 @@ int sllin_cache_config(struct linc_lin_state *linc_lin_state,
 	}
 
 	for (i = 0; i < 0x3F; i++) {
+		frame.can_dlc = linc_lin_state->frame_entry[i].data_len;
+		frame.can_id = i; /* LIN ID */
+		frame.data[0] = linc_lin_state->frame_entry[i].data[0]; /* Data */
+		frame.data[1] = linc_lin_state->frame_entry[i].data[1]; /* Data */
+		frame.data[2] = linc_lin_state->frame_entry[i].data[2]; /* Data */
+		frame.data[3] = linc_lin_state->frame_entry[i].data[3]; /* Data */
+		frame.data[4] = linc_lin_state->frame_entry[i].data[4]; /* Data */
+		frame.data[5] = linc_lin_state->frame_entry[i].data[5]; /* Data */
+		frame.data[6] = linc_lin_state->frame_entry[i].data[6]; /* Data */
+		frame.data[7] = linc_lin_state->frame_entry[i].data[7]; /* Data */
+		frame.can_id |= LIN_CTRL_FRAME;
 		if (linc_lin_state->frame_entry[i].status == 1) { /* Is active */
-			frame.can_dlc = linc_lin_state->frame_entry[i].data_len;
-			frame.can_id = i; /* LIN ID */
-			frame.data[0] = linc_lin_state->frame_entry[i].data[0]; /* Data */
-			frame.data[1] = linc_lin_state->frame_entry[i].data[1]; /* Data */
-			frame.data[2] = linc_lin_state->frame_entry[i].data[2]; /* Data */
-			frame.data[3] = linc_lin_state->frame_entry[i].data[3]; /* Data */
-			frame.data[4] = linc_lin_state->frame_entry[i].data[4]; /* Data */
-			frame.data[5] = linc_lin_state->frame_entry[i].data[5]; /* Data */
-			frame.data[6] = linc_lin_state->frame_entry[i].data[6]; /* Data */
-			frame.data[7] = linc_lin_state->frame_entry[i].data[7]; /* Data */
-
-			frame.can_id |= LIN_CTRL_FRAME | LIN_CACHE_RESPONSE;
-			ret = write(s, &frame, sizeof(frame));
-			printf("configuring frame cache; ret = %d\n", ret);
-			//if (ret ...)
-			//read_response(tty);
+			frame.can_id |= LIN_CACHE_RESPONSE;
 		}
+		ret = write(s, &frame, sizeof(frame));
+		printf("configuring frame cache; ret = %d\n", ret);
+		//if (ret ...)
+		//read_response(tty);
 	}
 
 	close(s);
