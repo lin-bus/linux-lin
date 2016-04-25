@@ -210,7 +210,11 @@ static int sltty_change_speed(struct tty_struct *tty, unsigned speed)
 	struct ktermios old_termios, termios;
 	int cflag;
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 12, 0)
 	mutex_lock(&tty->termios_mutex);
+#else
+	down_write(&tty->termios_rwsem);
+#endif
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 7, 0)
 	old_termios = termios = *(tty->termios);
@@ -238,7 +242,11 @@ static int sltty_change_speed(struct tty_struct *tty, unsigned speed)
 	if (tty->ops->set_termios)
 		tty->ops->set_termios(tty, &old_termios);
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 12, 0)
 	mutex_unlock(&tty->termios_mutex);
+#else
+	up_write(&tty->termios_rwsem);
+#endif
 
 	return 0;
 }
@@ -311,7 +319,12 @@ static void sllin_write_wakeup(struct tty_struct *tty)
 			return;	/* ongoing concurrent processing */
 
 		clear_bit(SLF_TXBUFF_RQ, &sl->flags);
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 18, 0)
 		smp_mb__after_clear_bit();
+#else
+		smp_mb__after_atomic();
+#endif
 
 		if (sl->lin_state != SLSTATE_BREAK_SENT)
 			remains = sl->tx_lim - sl->tx_cnt;
@@ -325,7 +338,11 @@ static void sllin_write_wakeup(struct tty_struct *tty)
 			remains -= actual;
 		}
 		clear_bit(SLF_TXBUFF_INPR, &sl->flags);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 18, 0)
 		smp_mb__after_clear_bit();
+#else
+		smp_mb__after_atomic();
+#endif
 
 	} while (unlikely(test_bit(SLF_TXBUFF_RQ, &sl->flags)));
 
@@ -838,7 +855,11 @@ static int sllin_send_tx_buff(struct sllin *sl)
 			return 0;	/* ongoing concurrent processing */
 
 		clear_bit(SLF_TXBUFF_RQ, &sl->flags);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 18, 0)
 		smp_mb__after_clear_bit();
+#else
+		smp_mb__after_atomic();
+#endif
 
 #ifdef BREAK_BY_BAUD
 		if (sl->lin_state != SLSTATE_BREAK_SENT)
@@ -872,7 +893,11 @@ static int sllin_send_tx_buff(struct sllin *sl)
 				sl->tx_cnt, remains);
 
 		clear_bit(SLF_TXBUFF_INPR, &sl->flags);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 18, 0)
 		smp_mb__after_clear_bit();
+#else
+		smp_mb__after_atomic();
+#endif
 
 	} while (unlikely(test_bit(SLF_TXBUFF_RQ, &sl->flags)));
 
@@ -1337,7 +1362,12 @@ static struct sllin *sll_alloc(dev_t line)
 		char name[IFNAMSIZ];
 		sprintf(name, "sllin%d", i);
 
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 17, 0))
 		dev = alloc_netdev(sizeof(*sl), name, sll_setup);
+#else
+		dev = alloc_netdev(sizeof(*sl), name, NET_NAME_UNKNOWN, sll_setup);
+#endif
+
 		if (!dev)
 			return NULL;
 		dev->base_addr  = i;
