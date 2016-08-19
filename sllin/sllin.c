@@ -1106,6 +1106,9 @@ static int sllin_kwthread(void *ptr)
 				if ((sce->frame_fl & LIN_CACHE_RESPONSE)
 					&& (sce->dlc > 0)) {
 
+					if (sce->frame_fl & LIN_SINGLE_RESPONSE)
+						sce->frame_fl &= ~LIN_CACHE_RESPONSE;
+
 					netdev_dbg(sl->dev, "Sending LIN response from linfr_cache\n");
 
 					lin_data = sce->data;
@@ -1255,6 +1258,9 @@ slstate_response_wait:
 
 			if ((sce->frame_fl & LIN_CACHE_RESPONSE)
 					&& (sce->dlc > 0)) {
+
+				if (sce->frame_fl & LIN_SINGLE_RESPONSE)
+					sce->frame_fl &= ~LIN_CACHE_RESPONSE;
 
 				netdev_dbg(sl->dev, "Sending LIN response from linfr_cache\n");
 
