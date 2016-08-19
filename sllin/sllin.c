@@ -41,7 +41,7 @@
  * Funded by:  Volkswagen Group Research
  */
 
-#define DEBUG			1 /* Enables pr_debug() printouts */
+//#define DEBUG			1 /* Enables pr_debug() printouts */
 
 #include <linux/module.h>
 #include <linux/moduleparam.h>
