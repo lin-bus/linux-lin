@@ -42,6 +42,7 @@
  */
 
 //#define DEBUG			1 /* Enables pr_debug() printouts */
+//#define SLLIN_LED_TRIGGER /* Enables led triggers */
 
 #include <linux/module.h>
 #include <linux/moduleparam.h>
@@ -68,6 +69,23 @@
 /* Should be in include/linux/tty.h */
 #define N_SLLIN			25
 /* -------------------------------- */
+
+#ifdef SLLIN_LED_TRIGGER
+#define SLLIN_LED_NAME_SZ (IFNAMSIZ + 6)
+#include <linux/leds.h>
+
+enum sllin_led_event {
+	SLLIN_LED_EVENT_OPEN,
+	SLLIN_LED_EVENT_STOP,
+	SLLIN_LED_EVENT_TX,
+	SLLIN_LED_EVENT_RX
+};
+
+static unsigned long led_delay = 50;
+module_param(led_delay, ulong, 0644);
+MODULE_PARM_DESC(led_delay,
+                 "blink delay time for activity leds (msecs, default: 50).");
+#endif /* SLLIN_LED_TRIGGER */
 
 static __initdata const char banner[] =
 	KERN_INFO "sllin: serial line LIN interface driver\n";
@@ -173,6 +191,15 @@ struct sllin {
 	/* List with configurations for	each of 0 to LIN_ID_MAX LIN IDs */
 	struct sllin_conf_entry linfr_cache[LIN_ID_MAX + 1];
 	spinlock_t		linfr_lock;	/* frame cache and buffers lock */
+
+#ifdef SLLIN_LED_TRIGGER
+	struct led_trigger *tx_led_trig;
+	char                tx_led_trig_name[SLLIN_LED_NAME_SZ];
+	struct led_trigger *rx_led_trig;
+	char                rx_led_trig_name[SLLIN_LED_NAME_SZ];
+	struct led_trigger *rxtx_led_trig;
+	char                rxtx_led_trig_name[SLLIN_LED_NAME_SZ];
+#endif
 };
 
 static struct net_device **sllin_devs;
@@ -195,6 +222,124 @@ const unsigned char sllin_id_parity_table[] = {
 	0xc0, 0x80, 0x00, 0x40, 0x80, 0xc0, 0x40, 0x00,
 	0x40, 0x00, 0x80, 0xc0, 0x00, 0x40, 0xc0, 0x80
 };
+
+#ifdef SLLIN_LED_TRIGGER
+static void sllin_led_event(struct net_device *netdev, enum sllin_led_event event)
+{
+	struct sllin *sl = netdev_priv(netdev);
+
+	switch (event) {
+	case SLLIN_LED_EVENT_OPEN:
+		led_trigger_event(sl->tx_led_trig,   LED_FULL);
+		led_trigger_event(sl->rx_led_trig,   LED_FULL);
+		led_trigger_event(sl->rxtx_led_trig, LED_FULL);
+		break;
+	case SLLIN_LED_EVENT_STOP:
+		led_trigger_event(sl->tx_led_trig,   LED_OFF);
+		led_trigger_event(sl->rx_led_trig,   LED_OFF);
+		led_trigger_event(sl->rxtx_led_trig, LED_OFF);
+		break;
+	case SLLIN_LED_EVENT_TX:
+		if (led_delay) {
+			led_trigger_blink_oneshot(sl->tx_led_trig,
+			                          &led_delay, &led_delay, 1);
+			led_trigger_blink_oneshot(sl->rxtx_led_trig,
+			                          &led_delay, &led_delay, 1);
+		}
+		break;
+	case SLLIN_LED_EVENT_RX:
+		if (led_delay) {
+			led_trigger_blink_oneshot(sl->rx_led_trig,
+			                          &led_delay, &led_delay, 1);
+			led_trigger_blink_oneshot(sl->rxtx_led_trig,
+			                          &led_delay, &led_delay, 1);
+		}
+		break;
+	}
+}
+
+static void sllin_led_release(struct device *gendev, void *res)
+{
+	struct sllin *sl = netdev_priv(to_net_dev(gendev));
+
+	led_trigger_unregister_simple(sl->tx_led_trig);
+	led_trigger_unregister_simple(sl->rx_led_trig);
+	led_trigger_unregister_simple(sl->rxtx_led_trig);
+}
+
+static void devm_sllin_led_init(struct net_device *netdev)
+{
+	struct sllin *sl = netdev_priv(netdev);
+	void *res;
+
+	res = devres_alloc(sllin_led_release, 0, GFP_KERNEL);
+	if (!res) {
+		netdev_err(netdev, "cannot register LED triggers\n");
+		return;
+	}
+
+	snprintf(sl->tx_led_trig_name, sizeof(sl->tx_led_trig_name),
+	         "%s-tx", netdev->name);
+	snprintf(sl->rx_led_trig_name, sizeof(sl->rx_led_trig_name),
+	         "%s-rx", netdev->name);
+	snprintf(sl->rxtx_led_trig_name, sizeof(sl->rxtx_led_trig_name),
+	         "%s-rxtx", netdev->name);
+
+	led_trigger_register_simple(sl->tx_led_trig_name,
+	                            &sl->tx_led_trig);
+	led_trigger_register_simple(sl->rx_led_trig_name,
+	                            &sl->rx_led_trig);
+	led_trigger_register_simple(sl->rxtx_led_trig_name,
+	                            &sl->rxtx_led_trig);
+
+	devres_add(&netdev->dev, res);
+}
+
+static struct sllin *netdev_priv_safe(struct net_device *dev)
+{
+	int i;
+
+	if (sllin_devs == NULL)
+		return NULL;
+
+	for (i = 0; i < maxdev; ++i)
+		if (sllin_devs[i] == dev)
+			return netdev_priv(dev);
+
+	return NULL;
+}
+
+static int sllin_netdev_notifier_call(struct notifier_block *nb, unsigned long msg,
+                              void *ptr)
+{
+	struct net_device *netdev = netdev_notifier_info_to_dev(ptr);
+	struct sllin *sl = netdev_priv_safe(netdev);
+	char name[SLLIN_LED_NAME_SZ];
+
+	if (!sl)
+		return NOTIFY_DONE;
+
+	if (!sl->tx_led_trig || !sl->rx_led_trig || !sl->rxtx_led_trig)
+		return NOTIFY_DONE;
+
+	if (msg == NETDEV_CHANGENAME) {
+		snprintf(name, sizeof(name), "%s-tx", netdev->name);
+		led_trigger_rename_static(name, sl->tx_led_trig);
+
+		snprintf(name, sizeof(name), "%s-rx", netdev->name);
+		led_trigger_rename_static(name, sl->rx_led_trig);
+
+		snprintf(name, sizeof(name), "%s-rxtx", netdev->name);
+		led_trigger_rename_static(name, sl->rxtx_led_trig);
+	}
+
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block sllin_netdev_notifier __read_mostly = {
+	.notifier_call = sllin_netdev_notifier_call,
+};
+#endif /* SLLIN_LED_TRIGGER */
 
 /**
  * sltty_change_speed() -- Change baudrate of Serial device belonging
@@ -276,6 +421,10 @@ static void sllin_send_canfr(struct sllin *sl, canid_t id, char *data, int len)
 
 	sl->dev->stats.rx_packets++;
 	sl->dev->stats.rx_bytes += cf.can_dlc;
+
+#ifdef SLLIN_LED_TRIGGER
+	sllin_led_event(sl->dev, SLLIN_LED_EVENT_RX);
+#endif
 }
 
 /**
@@ -425,6 +574,9 @@ static int sll_close(struct net_device *dev)
 	sl->tx_lim    = 0;
 	spin_unlock_bh(&sl->lock);
 
+#ifdef SLLIN_LED_TRIGGER
+	sllin_led_event(dev, SLLIN_LED_EVENT_STOP);
+#endif
 	return 0;
 }
 
@@ -440,6 +592,10 @@ static int sll_open(struct net_device *dev)
 
 	sl->flags &= (1 << SLF_INUSE);
 	netif_start_queue(dev);
+
+#ifdef SLLIN_LED_TRIGGER
+	sllin_led_event(dev, SLLIN_LED_EVENT_OPEN);
+#endif
 	return 0;
 }
 
@@ -900,6 +1056,10 @@ static int sllin_send_tx_buff(struct sllin *sl)
 #endif
 
 	} while (unlikely(test_bit(SLF_TXBUFF_RQ, &sl->flags)));
+
+#ifdef SLLIN_LED_TRIGGER
+	sllin_led_event(sl->dev, SLLIN_LED_EVENT_TX);
+#endif
 
 	return 0;
 
@@ -1483,6 +1643,10 @@ static int sllin_open(struct tty_struct *tty)
 		err = register_netdevice(sl->dev);
 		if (err)
 			goto err_free_chan_and_thread;
+
+#ifdef SLLIN_LED_TRIGGER
+		devm_sllin_led_init(sl->dev);
+#endif
 	}
 
 	/* Done.  We have linked the TTY line to a channel. */
@@ -1583,6 +1747,12 @@ static int __init sllin_init(void)
 {
 	int status;
 
+#ifdef SLLIN_LED_TRIGGER
+	status = register_netdevice_notifier(&sllin_netdev_notifier);
+	if (status)
+		pr_err("sllin: can't register netdevice notifier\n");
+#endif
+
 	if (maxdev < 4)
 		maxdev = 4; /* Sanity */
 
@@ -1668,6 +1838,11 @@ static void __exit sllin_exit(void)
 	i = tty_unregister_ldisc(N_SLLIN);
 	if (i)
 		pr_err("sllin: can't unregister ldisc (err %d)\n", i);
+
+#ifdef SLLIN_LED_TRIGGER
+	unregister_netdevice_notifier(&sllin_netdev_notifier);
+#endif
+
 }
 
 module_init(sllin_init);
