@@ -1013,6 +1013,7 @@ static int sllin_kwthread(void *ptr)
 	struct sched_param schparam = { .sched_priority = 40 };
 	int tx_bytes = 0; /* Used for Network statistics */
 	unsigned long flags;
+	int mode;
 	int lin_id;
 	struct sllin_conf_entry *sce;
 
@@ -1083,7 +1084,11 @@ static int sllin_kwthread(void *ptr)
 			if (!test_bit(SLF_MSGEVENT, &sl->flags))
 				break;
 
+			mode = 0;
 			cf = (struct can_frame *)sl->tx_req_skb->data;
+
+			if (cf->can_id & LIN_CHECKSUM_EXTENDED)
+				mode |= SLLIN_STPMSG_CHCKSUM_ENH;
 
 			/* SFF RTR CAN frame -> LIN header */
 			if (cf->can_id & CAN_RTR_FLAG) {
@@ -1094,6 +1099,8 @@ static int sllin_kwthread(void *ptr)
 
 				sce = &sl->linfr_cache[cf->can_id & LIN_ID_MASK];
 				spin_lock_irqsave(&sl->linfr_lock, flags);
+				if (sce->frame_fl & LIN_CHECKSUM_EXTENDED)
+					mode |= SLLIN_STPMSG_CHCKSUM_ENH;
 
 				/* Is there Slave response in linfr_cache to be sent? */
 				if ((sce->frame_fl & LIN_CACHE_RESPONSE)
@@ -1114,8 +1121,14 @@ static int sllin_kwthread(void *ptr)
 				spin_unlock_irqrestore(&sl->linfr_lock, flags);
 
 			} else { /* SFF NON-RTR CAN frame -> LIN header + LIN response */
+				struct sllin_conf_entry *sce;
+
 				netdev_dbg(sl->dev, "%s: NON-RTR SFF CAN frame, ID = %x\n",
 					__func__, (int)cf->can_id & LIN_ID_MASK);
+
+				sce = &sl->linfr_cache[cf->can_id & LIN_ID_MASK];
+				if (sce->frame_fl & LIN_CHECKSUM_EXTENDED)
+					mode |= SLLIN_STPMSG_CHCKSUM_ENH;
 
 				lin_data = cf->data;
 				lin_dlc = cf->can_dlc;
@@ -1124,7 +1137,7 @@ static int sllin_kwthread(void *ptr)
 				tx_bytes = lin_dlc;
 			}
 
-			if (sllin_setup_msg(sl, 0, cf->can_id & LIN_ID_MASK,
+			if (sllin_setup_msg(sl, mode, cf->can_id & LIN_ID_MASK,
 				lin_data, lin_dlc) != -1) {
 
 				sl->id_to_send = true;
@@ -1242,7 +1255,6 @@ slstate_response_wait:
 
 			if ((sce->frame_fl & LIN_CACHE_RESPONSE)
 					&& (sce->dlc > 0)) {
-				int mode;
 
 				netdev_dbg(sl->dev, "Sending LIN response from linfr_cache\n");
 
