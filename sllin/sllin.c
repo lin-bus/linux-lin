@@ -101,15 +101,15 @@ MODULE_AUTHOR("Pavel Pisa <pisa@cmp.felk.cvut.cz>");
 static bool master = true;
 static int baudrate; /* Use LIN_DEFAULT_BAUDRATE when not set */
 
-module_param(master, bool, 0);
+module_param(master, bool, 0444);
 MODULE_PARM_DESC(master, "LIN interface is Master device");
-module_param(baudrate, int, 0);
+module_param(baudrate, int, 0444);
 MODULE_PARM_DESC(baudrate, "Baudrate of LIN interface");
 
 static int maxdev = 10;		/* MAX number of SLLIN channels;
 				   This can be overridden with
 				   insmod sllin.ko maxdev=nnn	*/
-module_param(maxdev, int, 0);
+module_param(maxdev, int, 0444);
 MODULE_PARM_DESC(maxdev, "Maximum number of sllin interfaces");
 
 /* maximum buffer len to store whole LIN message*/
