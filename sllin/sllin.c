@@ -1252,8 +1252,6 @@ static int sllin_kwthread(void *ptr)
 
 			/* SFF RTR CAN frame -> LIN header */
 			if (cf->can_id & CAN_RTR_FLAG) {
-				struct sllin_conf_entry *sce;
-
 				netdev_dbg(sl->dev, "%s: RTR SFF CAN frame, ID = %x\n",
 					__func__, cf->can_id & LIN_ID_MASK);
 
@@ -1284,8 +1282,6 @@ static int sllin_kwthread(void *ptr)
 				spin_unlock_irqrestore(&sl->linfr_lock, flags);
 
 			} else { /* SFF NON-RTR CAN frame -> LIN header + LIN response */
-				struct sllin_conf_entry *sce;
-
 				netdev_dbg(sl->dev, "%s: NON-RTR SFF CAN frame, ID = %x\n",
 					__func__, (int)cf->can_id & LIN_ID_MASK);
 
