@@ -1087,7 +1087,11 @@ static int sllin_send_break(struct sllin *sl)
 	break_baud = ((sl->lin_baud * 2) / 3);
 	sltty_change_speed(tty, break_baud);
 
-	tty->ops->flush_buffer(tty);
+	if (tty != NULL && tty->ops != NULL && tty->ops->flush_buffer != NULL) {
+		tty->ops->flush_buffer(tty);
+	} else {
+		netdev_dbg(sl->dev, "flush_buffer is not implemented.\n");
+	}
 	sl->rx_cnt = SLLIN_BUFF_BREAK;
 
 	sl->rx_expect = SLLIN_BUFF_BREAK + 1;
@@ -1132,7 +1136,11 @@ static int sllin_send_break(struct sllin *sl)
 	usleep_range_max = usleep_range_min + 30;
 	usleep_range(usleep_range_min, usleep_range_max);
 
-	tty->ops->flush_buffer(tty);
+	if (tty != NULL && tty->ops != NULL && tty->ops->flush_buffer != NULL) {
+		tty->ops->flush_buffer(tty);
+	} else {
+		netdev_dbg(sl->dev, "flush_buffer is not implemented.\n");
+	}
 
 	sl->tx_cnt = SLLIN_BUFF_SYNC;
 
