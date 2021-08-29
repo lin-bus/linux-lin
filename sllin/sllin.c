@@ -473,7 +473,7 @@ static void sll_setup(struct net_device *dev)
 		dev->needs_free_netdev	= true;
 		dev->priv_destructor	= sll_free_netdev;
 	#else
-		dev->destructor			= slc_free_netdev;
+		dev->destructor			= sll_free_netdev;
 	#endif	
 
 	dev->hard_header_len	= 0;
@@ -1686,7 +1686,10 @@ static void __exit sllin_exit(void)
 		sl = netdev_priv(dev);
 		if (sl->tty) {
 			netdev_dbg(sl->dev, "tty discipline still running\n");
-
+			#if LINUX_VERSION_CODE <= KERNEL_VERSION(4, 11, 8)
+				/* Intentionally leak the control block. */
+				dev->destructor = NULL;
+			#endif
 		}
 
 		unregister_netdev(dev);
