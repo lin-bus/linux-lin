@@ -55,10 +55,9 @@
 #include <linux/skbuff.h>
 #include <linux/rtnetlink.h>
 #include <linux/if_arp.h>
-#include <linux/if_ether.h>
+#include <linux/if_ether.h>	
 #include <linux/sched.h>
-#include <uapi/linux/sched/types.h>
-
+	#include <uapi/linux/sched/types.h>
 #include <linux/delay.h>
 #include <linux/init.h>
 
@@ -67,7 +66,7 @@
 #include <linux/version.h>
 #include <linux/can.h>
 #include <linux/can/skb.h>
-#include <linux/can/can-ml.h>
+	#include <linux/can/can-ml.h>
 #include "linux/lin_bus.h"
 
 
@@ -454,7 +453,7 @@ static void sll_free_netdev(struct net_device *dev)
 {
 	int i = dev->base_addr;
 	//changed in version 4.11.9 according to https://elixir.bootlin.com/linux/v4.11.9/source/drivers/net/can/slcan.c
-	#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 11, 9))
+	#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 11, 9)
 		free_netdev(dev);
 	#endif	
 	sllin_devs[i] = NULL;
@@ -470,7 +469,7 @@ static void sll_setup(struct net_device *dev)
 {
 	//changed in version 4.11.9 according to https://elixir.bootlin.com/linux/v4.11.9/source/drivers/net/can/slcan.c
 	dev->netdev_ops		= &sll_netdev_ops;
-	#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 9))
+	#if LINUX_VERSION_CODE > KERNEL_VERSION(4, 11, 8)
 		dev->needs_free_netdev	= true;
 		dev->priv_destructor	= sll_free_netdev;
 	#else
@@ -481,7 +480,7 @@ static void sll_setup(struct net_device *dev)
 	dev->addr_len		= 0;
 	dev->tx_queue_len	= 10;
 
-	dev->mtu		= sizeof(struct can_frame)
+	dev->mtu		= sizeof(struct can_frame);
 	dev->type		= ARPHRD_CAN;
 
 	/* New-style flags. */
@@ -1052,7 +1051,7 @@ static int sllin_kwthread(void *ptr)
 	SCHED_FIFO class at priority 50 — halfway between the minimum and maximum values."
 	
 	*/
-	#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0))
+	#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0)
 		sched_set_fifo(current);
 	#else
 		sched_setscheduler(current, SCHED_FIFO, &schparam);
@@ -1406,10 +1405,10 @@ static struct sllin *sll_alloc(dev_t line)
 		sprintf(name, "sllin%d", i);
 		
 		//changed in 5.4.0 according to https://elixir.bootlin.com/linux/v5.4/source/drivers/net/can/slcan.c
-		#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0))
+		#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
 			size = ALIGN(sizeof(*sl), NETDEV_ALIGN) + sizeof(struct can_ml_priv);
 			dev = alloc_netdev(size, name, NET_NAME_UNKNOWN, sll_setup);
-		#elif (LINUX_VERSION_CODE < KERNEL_VERSION(3, 17, 0))
+		#elif LINUX_VERSION_CODE < KERNEL_VERSION(3, 17, 0)
 			dev = alloc_netdev(sizeof(*sl), name, sll_setup);
 		#else
 			dev = alloc_netdev(sizeof(*sl), name, NET_NAME_UNKNOWN, sll_setup);
@@ -1421,7 +1420,7 @@ static struct sllin *sll_alloc(dev_t line)
 	}
 
 	sl = netdev_priv(dev);
-	#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0))
+	#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
 		dev->ml_priv = (void *)sl + ALIGN(sizeof(*sl), NETDEV_ALIGN);
 	#endif
 	/* Initialize channel control data */
