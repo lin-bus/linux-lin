@@ -57,16 +57,22 @@
 #include <linux/if_arp.h>
 #include <linux/if_ether.h>
 #include <linux/sched.h>
+#include <uapi/linux/sched/types.h>
+
 #include <linux/delay.h>
 #include <linux/init.h>
-#include <linux/can.h>
+
 #include <linux/kthread.h>
 #include <linux/hrtimer.h>
 #include <linux/version.h>
+#include <linux/can.h>
+#include <linux/can/skb.h>
+#include <linux/can/can-ml.h>
 #include "linux/lin_bus.h"
 
+
 /* Should be in include/linux/tty.h */
-#define N_SLLIN			25
+#define N_SLLIN			28
 /* -------------------------------- */
 
 static __initdata const char banner[] =
@@ -447,7 +453,7 @@ static int sll_open(struct net_device *dev)
 static void sll_free_netdev(struct net_device *dev)
 {
 	int i = dev->base_addr;
-	free_netdev(dev);
+	//free_netdev(dev);
 	sllin_devs[i] = NULL;
 }
 
@@ -460,18 +466,21 @@ static const struct net_device_ops sll_netdev_ops = {
 static void sll_setup(struct net_device *dev)
 {
 	dev->netdev_ops		= &sll_netdev_ops;
-	dev->destructor		= sll_free_netdev;
+	dev->needs_free_netdev	= true;
+	dev->priv_destructor	= sll_free_netdev;
 
 	dev->hard_header_len	= 0;
 	dev->addr_len		= 0;
 	dev->tx_queue_len	= 10;
 
-	dev->mtu		= sizeof(struct can_frame);
+	dev->mtu		= CAN_MTU;
 	dev->type		= ARPHRD_CAN;
 
 	/* New-style flags. */
 	dev->flags		= IFF_NOARP;
 	dev->features           = NETIF_F_HW_CSUM; /* NETIF_F_NO_CSUM;*/
+
+
 }
 
 /******************************************
@@ -540,13 +549,16 @@ static void sllin_report_error(struct sllin *sl, int err)
 	switch (err) {
 	case LIN_ERR_CHECKSUM:
 		sl->dev->stats.rx_crc_errors++;
+		netdev_dbg(sl->dev, "error - checksum error!");
 		break;
 
 	case LIN_ERR_RX_TIMEOUT:
+		netdev_dbg(sl->dev, "error - rx timeout!");
 		sl->dev->stats.rx_errors++;
 		break;
 
 	case LIN_ERR_FRAMING:
+		netdev_dbg(sl->dev, "error - LIN frame error");
 		sl->dev->stats.rx_frame_errors++;
 		break;
 	}
@@ -770,12 +782,15 @@ static void sllin_slave_receive_buf(struct tty_struct *tty,
 				/* 'Duplicated' break character -- ignore */
 				if (*cp == 0x00) {
 					cp++;
+					
 					continue;
 				}
 
 				/* Wrong sync character */
-				if (*cp != 0x55)
+				if (*cp != 0x55) {
+					netdev_dbg(sl->dev, "error - wrong sync char");
 					break;
+				}
 			}
 
 			sl->rx_buff[sl->rx_cnt++] = *cp++;
@@ -991,11 +1006,16 @@ static enum hrtimer_restart sllin_rx_timeout_handler(struct hrtimer *hrtimer)
 			(sl->rx_cnt <= SLLIN_BUFF_DATA) ||
 			((!sl->rx_len_unknown) &&
 			(sl->rx_cnt < sl->rx_expect))) {
+				
+		netdev_dbg(sl->dev, "error - Master didn't receive as much as expected\n");
+		netdev_dbg(sl->dev, "expected: %d\n", sl->rx_expect);
+		netdev_dbg(sl->dev, "received: %d\n", sl->rx_cnt);
 		sllin_report_error(sl, LIN_ERR_RX_TIMEOUT);
 		set_bit(SLF_TMOUTEVENT, &sl->flags);
 	} else {
 		sllin_slave_finish_rx_msg(sl);
 		set_bit(SLF_RXEVENT, &sl->flags);
+		
 	}
 	wake_up(&sl->kwt_wq);
 
@@ -1017,7 +1037,9 @@ static int sllin_kwthread(void *ptr)
 	struct sllin_conf_entry *sce;
 
 	netdev_dbg(sl->dev, "sllin_kwthread started.\n");
-	sched_setscheduler(current, SCHED_FIFO, &schparam);
+	//sched_setscheduler(current, SCHED_FIFO, &schparam);
+	//TODO: set_schedule
+	sched_set_fifo(current);
 
 	clear_bit(SLF_ERROR, &sl->flags);
 	sltty_change_speed(tty, sl->lin_baud);
@@ -1332,7 +1354,9 @@ static void sll_sync(void)
 static struct sllin *sll_alloc(dev_t line)
 {
 	int i;
+	int size;
 	struct net_device *dev = NULL;
+	//struct can_ml_priv *can_ml;
 	struct sllin       *sl;
 
 	if (sllin_devs == NULL)
@@ -1348,7 +1372,8 @@ static struct sllin *sll_alloc(dev_t line)
 	/* Sorry, too many, all slots in use */
 	if (i >= maxdev)
 		return NULL;
-
+	
+	/* unregister existing net devices first */
 	if (dev) {
 		sl = netdev_priv(dev);
 		if (test_bit(SLF_INUSE, &sl->flags)) {
@@ -1357,23 +1382,33 @@ static struct sllin *sll_alloc(dev_t line)
 			sllin_devs[i] = NULL;
 		}
 	}
-
+	
+	
 	if (!dev) {
+		/*FIX ME!!! at some unknown version the kernel changes to the below format
+		THEN after aprx 5.10.? it changes AGAIN(See SLCAN changes and implement accordingly)
+		*/
 		char name[IFNAMSIZ];
 		sprintf(name, "sllin%d", i);
+		size = ALIGN(sizeof(*sl), NETDEV_ALIGN) + sizeof(struct can_ml_priv);
+		dev = alloc_netdev(size, name, NET_NAME_UNKNOWN, sll_setup);
 
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 17, 0))
-		dev = alloc_netdev(sizeof(*sl), name, sll_setup);
-#else
-		dev = alloc_netdev(sizeof(*sl), name, NET_NAME_UNKNOWN, sll_setup);
-#endif
+//#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 17, 0))
+//		dev = alloc_netdev(sizeof(*sl), name, sll_setup);
+//#else
+//		dev = alloc_netdev(sizeof(*sl), name, NET_NAME_UNKNOWN, sll_setup);
+//#endif
+
 
 		if (!dev)
 			return NULL;
 		dev->base_addr  = i;
 	}
 
+	
 	sl = netdev_priv(dev);
+	dev->ml_priv = (void *)sl + ALIGN(sizeof(*sl), NETDEV_ALIGN);
+	
 	/* Initialize channel control data */
 	sl->magic = SLLIN_MAGIC;
 	sl->dev	= dev;
@@ -1637,8 +1672,7 @@ static void __exit sllin_exit(void)
 		sl = netdev_priv(dev);
 		if (sl->tty) {
 			netdev_dbg(sl->dev, "tty discipline still running\n");
-			/* Intentionally leak the control block. */
-			dev->destructor = NULL;
+
 		}
 
 		unregister_netdev(dev);
