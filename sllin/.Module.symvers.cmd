@@ -1,1 +1,0 @@
-cmd_/home/pi/Repos/linux-lin/sllin/Module.symvers := sed 's/ko$$/o/' /home/pi/Repos/linux-lin/sllin/modules.order | scripts/mod/modpost -m -a   -o /home/pi/Repos/linux-lin/sllin/Module.symvers -e -i Module.symvers   -T -
