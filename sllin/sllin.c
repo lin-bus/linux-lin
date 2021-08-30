@@ -638,9 +638,9 @@ static void sll_setup(struct net_device *dev)
 {
 	dev->netdev_ops		= &sll_netdev_ops;
 	#if LINUX_VERSION_CODE < KERNEL_VERSION(4,12,0)
-		dev->needs_free_netdev	= true;
 		dev->destructor		= sll_free_netdev;
 	#else /* Linux 4.12.0+ */
+		dev->needs_free_netdev	= true;
 		dev->priv_destructor	= sll_free_netdev;
 	#endif /* Linux 4.12.0+ */
 
