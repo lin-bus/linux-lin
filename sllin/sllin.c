@@ -1209,7 +1209,6 @@ static int sllin_kwthread(void *ptr)
 {
 	struct sllin *sl = (struct sllin *)ptr;
 	struct tty_struct *tty = sl->tty;
-	struct sched_param schparam = { .sched_priority = 40 };
 	int tx_bytes = 0; /* Used for Network statistics */
 	unsigned long flags;
 	int mode;
@@ -1237,6 +1236,7 @@ static int sllin_kwthread(void *ptr)
 	#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0)
 		sched_set_fifo(current);
 	#else
+		struct sched_param schparam = { .sched_priority = 40 };
 		sched_setscheduler(current, SCHED_FIFO, &schparam);
 	#endif
 
@@ -1444,7 +1444,7 @@ slstate_response_wait:
 					sl->lin_state = SLSTATE_RESPONSE_WAIT_BUS;
 				}
 			}
-
+			fallthrough;
 			/* Be aware, no BREAK here */
 		case SLSTATE_RESPONSE_WAIT_BUS:
 			if (sl->rx_cnt < sl->rx_expect)
