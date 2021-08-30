@@ -70,9 +70,13 @@
 #include <uapi/linux/sched/types.h>
 #endif
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,4,0)
+#include <linux/can/can-ml.h>
+#endif
+
 /* Should be in include/linux/tty.h */
-#define N_SLLIN			25
-#define N_SLLIN_SLAVE		26
+#define N_SLLIN			28
+#define N_SLLIN_SLAVE		29
 /* -------------------------------- */
 
 #ifdef SLLIN_LED_TRIGGER
@@ -617,7 +621,11 @@ static void sll_free_netdev(struct net_device *dev)
 {
 	int i = dev->base_addr;
 	free_netdev(dev);
-	sllin_devs[i] = NULL;
+	//changed in version 4.11.9 according to https://elixir.bootlin.com/linux/v4.11.9/source/drivers/net/can/slcan.c
+	#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 11, 9)
+		free_netdev(dev);
+	#endif	
+ 	sllin_devs[i] = NULL;
 }
 
 static const struct net_device_ops sll_netdev_ops = {
@@ -629,11 +637,12 @@ static const struct net_device_ops sll_netdev_ops = {
 static void sll_setup(struct net_device *dev)
 {
 	dev->netdev_ops		= &sll_netdev_ops;
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4,12,0)
-	dev->destructor		= sll_free_netdev;
-#else /* Linux 4.12.0+ */
-	dev->priv_destructor	= sll_free_netdev;
-#endif /* Linux 4.12.0+ */
+	#if LINUX_VERSION_CODE < KERNEL_VERSION(4,12,0)
+		dev->needs_free_netdev	= true;
+		dev->destructor		= sll_free_netdev;
+	#else /* Linux 4.12.0+ */
+		dev->priv_destructor	= sll_free_netdev;
+	#endif /* Linux 4.12.0+ */
 
 	dev->hard_header_len	= 0;
 	dev->addr_len		= 0;
@@ -1208,7 +1217,28 @@ static int sllin_kwthread(void *ptr)
 	struct sllin_conf_entry *sce;
 
 	netdev_dbg(sl->dev, "sllin_kwthread started.\n");
-	sched_setscheduler(current, SCHED_FIFO, &schparam);
+	/* 
+	Changed in 5.9 According to https://elixir.bootlin.com/linux/v5.9/source/kernel/sched/core.c	
+	
+	According to https://lwn.net/Articles/818388/
+
+	"So he has changed the kernel's internal interfaces to take away the ability to run at a specific SCHED_FIFO priority. What remains is a set of three functions:
+
+    	void sched_set_fifo(struct task_struct *p);
+    	void sched_set_fifo_low(struct task_struct *p);
+    	void sched_set_normal(struct task_struct *p, int nice);
+
+		***FOR LOADABLE MODULES, THESE BECOME THE ONLY FUNCTIONS AVAILABLE***
+	for manipulating a thread's scheduling information. All three functions are exported only 
+	to modules with GPL-compatible licenses. A call to sched_set_fifo() puts the given process into the 
+	SCHED_FIFO class at priority 50 — halfway between the minimum and maximum values."
+	
+	*/
+	#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0)
+		sched_set_fifo(current);
+	#else
+		sched_setscheduler(current, SCHED_FIFO, &schparam);
+	#endif
 
 	clear_bit(SLF_ERROR, &sl->flags);
 	sltty_change_speed(tty, sl->lin_baud);
@@ -1536,6 +1566,7 @@ static void sll_sync(void)
 static struct sllin *sll_alloc(dev_t line)
 {
 	int i;
+	int size;
 	struct net_device *dev = NULL;
 	struct sllin       *sl;
 
@@ -1566,11 +1597,15 @@ static struct sllin *sll_alloc(dev_t line)
 		char name[IFNAMSIZ];
 		sprintf(name, "sllin%d", i);
 
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 17, 0))
-		dev = alloc_netdev(sizeof(*sl), name, sll_setup);
-#else
-		dev = alloc_netdev(sizeof(*sl), name, NET_NAME_UNKNOWN, sll_setup);
-#endif
+		//changed in 5.4.0 according to https://elixir.bootlin.com/linux/v5.4/source/drivers/net/can/slcan.c
+		#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+			size = ALIGN(sizeof(*sl), NETDEV_ALIGN) + sizeof(struct can_ml_priv);
+			dev = alloc_netdev(size, name, NET_NAME_UNKNOWN, sll_setup);
+		#elif LINUX_VERSION_CODE < KERNEL_VERSION(3, 17, 0)
+			dev = alloc_netdev(sizeof(*sl), name, sll_setup);
+		#else
+			dev = alloc_netdev(sizeof(*sl), name, NET_NAME_UNKNOWN, sll_setup);
+		#endif
 
 		if (!dev)
 			return NULL;
@@ -1578,6 +1613,9 @@ static struct sllin *sll_alloc(dev_t line)
 	}
 
 	sl = netdev_priv(dev);
+	#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+		dev->ml_priv = (void *)sl + ALIGN(sizeof(*sl), NETDEV_ALIGN);
+	#endif
 	/* Initialize channel control data */
 	sl->magic = SLLIN_MAGIC;
 	sl->dev	= dev;
