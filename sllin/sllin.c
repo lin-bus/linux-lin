@@ -75,8 +75,8 @@
 #endif
 
 /* Should be in include/linux/tty.h */
-#define N_SLLIN			25
-#define N_SLLIN_SLAVE		26
+#define N_SLLIN			28
+#define N_SLLIN_SLAVE		29
 /* -------------------------------- */
 
 #ifdef SLLIN_LED_TRIGGER
