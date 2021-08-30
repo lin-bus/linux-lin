@@ -1444,7 +1444,7 @@ slstate_response_wait:
 					sl->lin_state = SLSTATE_RESPONSE_WAIT_BUS;
 				}
 			}
-			fallthrough;
+
 			/* Be aware, no BREAK here */
 		case SLSTATE_RESPONSE_WAIT_BUS:
 			if (sl->rx_cnt < sl->rx_expect)
