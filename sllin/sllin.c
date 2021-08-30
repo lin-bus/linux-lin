@@ -70,6 +70,10 @@
 #include <uapi/linux/sched/types.h>
 #endif
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+#include <linux/can/can-ml.h>
+#endif
+
 /* Should be in include/linux/tty.h */
 #define N_SLLIN			25
 #define N_SLLIN_SLAVE		26
@@ -617,6 +621,9 @@ static void sll_free_netdev(struct net_device *dev)
 {
 	int i = dev->base_addr;
 	free_netdev(dev);
+	#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 11, 9)
+		free_netdev(dev);
+	#endif
 	sllin_devs[i] = NULL;
 }
 
@@ -629,11 +636,12 @@ static const struct net_device_ops sll_netdev_ops = {
 static void sll_setup(struct net_device *dev)
 {
 	dev->netdev_ops		= &sll_netdev_ops;
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4,12,0)
-	dev->destructor		= sll_free_netdev;
-#else /* Linux 4.12.0+ */
-	dev->priv_destructor	= sll_free_netdev;
-#endif /* Linux 4.12.0+ */
+	#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 11, 9)
+		dev->destructor		= sll_free_netdev;
+	#else /* Linux 4.11.9+ */
+		dev->needs_free_netdev	= true;
+		dev->priv_destructor	= sll_free_netdev;
+	#endif /* Linux 4.11.9+ */
 
 	dev->hard_header_len	= 0;
 	dev->addr_len		= 0;
@@ -1536,6 +1544,9 @@ static void sll_sync(void)
 static struct sllin *sll_alloc(dev_t line)
 {
 	int i;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+	int size;
+#endif
 	struct net_device *dev = NULL;
 	struct sllin       *sl;
 
@@ -1565,12 +1576,14 @@ static struct sllin *sll_alloc(dev_t line)
 	if (!dev) {
 		char name[IFNAMSIZ];
 		sprintf(name, "sllin%d", i);
-
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 17, 0))
-		dev = alloc_netdev(sizeof(*sl), name, sll_setup);
-#else
-		dev = alloc_netdev(sizeof(*sl), name, NET_NAME_UNKNOWN, sll_setup);
-#endif
+		#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+			size = ALIGN(sizeof(*sl), NETDEV_ALIGN) + sizeof(struct can_ml_priv);
+			dev = alloc_netdev(size, name, NET_NAME_UNKNOWN, sll_setup);
+		#elif LINUX_VERSION_CODE < KERNEL_VERSION(3, 17, 0)
+			dev = alloc_netdev(sizeof(*sl), name, sll_setup);
+		#else
+			dev = alloc_netdev(sizeof(*sl), name, NET_NAME_UNKNOWN, sll_setup);
+		#endif
 
 		if (!dev)
 			return NULL;
@@ -1578,6 +1591,9 @@ static struct sllin *sll_alloc(dev_t line)
 	}
 
 	sl = netdev_priv(dev);
+	#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+		dev->ml_priv = (void *)sl + ALIGN(sizeof(*sl), NETDEV_ALIGN);
+	#endif
 	/* Initialize channel control data */
 	sl->magic = SLLIN_MAGIC;
 	sl->dev	= dev;
@@ -1915,11 +1931,11 @@ static void __exit sllin_exit(void)
 		if (sl->tty) {
 			netdev_dbg(sl->dev, "tty discipline still running\n");
 			/* Intentionally leak the control block. */
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4,12,0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 11, 9)
 			dev->destructor = NULL;
-#else /* Linux 4.12.0+ */
+#else /* Linux 4.11.9+ */
 			dev->priv_destructor = NULL;
-#endif /* Linux 4.12.0+ */
+#endif /* Linux 4.11.9+ */
 		}
 
 		unregister_netdev(dev);
