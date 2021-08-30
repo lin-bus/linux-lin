@@ -1208,15 +1208,20 @@ static int sllin_kwthread(void *ptr)
 {
 	struct sllin *sl = (struct sllin *)ptr;
 	struct tty_struct *tty = sl->tty;
-	struct sched_param schparam = { .sched_priority = 40 };
 	int tx_bytes = 0; /* Used for Network statistics */
 	unsigned long flags;
 	int mode;
 	int lin_id;
 	struct sllin_conf_entry *sce;
 
+	#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 9, 0)
+		struct sched_param schparam = { .sched_priority = 40 };
+		sched_setscheduler(current, SCHED_FIFO, &schparam);
+	#else /* >= KERNEL_VERSION(5, 9, 0) */
+		sched_set_fifo(current);
+	#endif
+
 	netdev_dbg(sl->dev, "sllin_kwthread started.\n");
-	sched_setscheduler(current, SCHED_FIFO, &schparam);
 
 	clear_bit(SLF_ERROR, &sl->flags);
 	sltty_change_speed(tty, sl->lin_baud);
