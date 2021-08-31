@@ -621,7 +621,6 @@ static void sll_free_netdev(struct net_device *dev)
 {
 	int i = dev->base_addr;
 	free_netdev(dev);
-	//changed in version 4.11.9 according to https://elixir.bootlin.com/linux/v4.11.9/source/drivers/net/can/slcan.c
 	#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 11, 9)
 		free_netdev(dev);
 	#endif	
@@ -1216,23 +1215,7 @@ static int sllin_kwthread(void *ptr)
 	struct sllin_conf_entry *sce;
 
 	netdev_dbg(sl->dev, "sllin_kwthread started.\n");
-	/* 
-	Changed in 5.9 According to https://elixir.bootlin.com/linux/v5.9/source/kernel/sched/core.c	
 	
-	According to https://lwn.net/Articles/818388/
-
-	"So he has changed the kernel's internal interfaces to take away the ability to run at a specific SCHED_FIFO priority. What remains is a set of three functions:
-
-    	void sched_set_fifo(struct task_struct *p);
-    	void sched_set_fifo_low(struct task_struct *p);
-    	void sched_set_normal(struct task_struct *p, int nice);
-
-		***FOR LOADABLE MODULES, THESE BECOME THE ONLY FUNCTIONS AVAILABLE***
-	for manipulating a thread's scheduling information. All three functions are exported only 
-	to modules with GPL-compatible licenses. A call to sched_set_fifo() puts the given process into the 
-	SCHED_FIFO class at priority 50 — halfway between the minimum and maximum values."
-	
-	*/
 	#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0)
 		sched_set_fifo(current);
 	#else
@@ -1596,8 +1579,6 @@ static struct sllin *sll_alloc(dev_t line)
 	if (!dev) {
 		char name[IFNAMSIZ];
 		sprintf(name, "sllin%d", i);
-
-		//changed in 5.4.0 according to https://elixir.bootlin.com/linux/v5.4/source/drivers/net/can/slcan.c
 		#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
 			size = ALIGN(sizeof(*sl), NETDEV_ALIGN) + sizeof(struct can_ml_priv);
 			dev = alloc_netdev(size, name, NET_NAME_UNKNOWN, sll_setup);
