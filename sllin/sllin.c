@@ -636,12 +636,12 @@ static const struct net_device_ops sll_netdev_ops = {
 static void sll_setup(struct net_device *dev)
 {
 	dev->netdev_ops		= &sll_netdev_ops;
-	#if LINUX_VERSION_CODE < KERNEL_VERSION(4,12,0)
+	#if LINUX_VERSION_CODE < KERNEL_VERSION(4,11,9)
 		dev->destructor		= sll_free_netdev;
-	#else /* Linux 4.12.0+ */
+	#else /* Linux 4.11.9+ */
 		dev->needs_free_netdev	= true;
 		dev->priv_destructor	= sll_free_netdev;
-	#endif /* Linux 4.12.0+ */
+	#endif /* Linux 4.11.9+ */
 
 	dev->hard_header_len	= 0;
 	dev->addr_len		= 0;
@@ -1934,11 +1934,11 @@ static void __exit sllin_exit(void)
 		if (sl->tty) {
 			netdev_dbg(sl->dev, "tty discipline still running\n");
 			/* Intentionally leak the control block. */
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4,12,0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,11,9)
 			dev->destructor = NULL;
-#else /* Linux 4.12.0+ */
+#else /* Linux 4.11.9+ */
 			dev->priv_destructor = NULL;
-#endif /* Linux 4.12.0+ */
+#endif /* Linux 4.11.9+ */
 		}
 
 		unregister_netdev(dev);
