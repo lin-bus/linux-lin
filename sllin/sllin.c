@@ -1694,14 +1694,14 @@ static int sllin_open_common(struct tty_struct *tty, bool setup_master)
 
 		set_bit(SLF_INUSE, &sl->flags);
 
+		err = register_netdevice(sl->dev);
+		if (err)
+			goto err_free_chan;
+
 		init_waitqueue_head(&sl->kwt_wq);
 		sl->kwthread = kthread_run(sllin_kwthread, sl, "sllin");
 		if (sl->kwthread == NULL)
-			goto err_free_chan;
-
-		err = register_netdevice(sl->dev);
-		if (err)
-			goto err_free_chan_and_thread;
+			goto err_free_chan_and_netdev;
 
 #ifdef SLLIN_LED_TRIGGER
 		devm_sllin_led_init(sl->dev);
@@ -1715,9 +1715,9 @@ static int sllin_open_common(struct tty_struct *tty, bool setup_master)
 	/* TTY layer expects 0 on success */
 	return 0;
 
-err_free_chan_and_thread:
-	kthread_stop(sl->kwthread);
-	sl->kwthread = NULL;
+err_free_chan_and_netdev:
+	free_netdev(sl->dev);
+	sl->dev = NULL;
 
 err_free_chan:
 	sl->tty = NULL;
