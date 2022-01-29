@@ -620,7 +620,6 @@ static int sll_open(struct net_device *dev)
 static void sll_free_netdev(struct net_device *dev)
 {
 	int i = dev->base_addr;
-	free_netdev(dev);
 	#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 11, 9)
 		free_netdev(dev);
 	#endif
