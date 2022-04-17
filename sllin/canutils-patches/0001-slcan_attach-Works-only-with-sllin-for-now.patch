@@ -15,7 +15,7 @@ index 89366be..3686a29 100644
  #include <net/if.h>
  
  #define LDISC_N_SLCAN 17 /* default slcan line discipline since Kernel 2.6.25 */
-+#define LDISC_N_SLLIN 25
++#define LDISC_N_SLLIN 28
  
  void print_usage(char *prg)
  {

@@ -30,9 +30,12 @@ $ sudo slcan_attach -w /dev/ttyS0
 attached tty /dev/ttyS0 to netdevice sllin0
 Press any key to detach /dev/ttyS0 ...
 
-#It is also possible to use ldattach
-#$ sudo ldattach 25 /dev/ttyS0
-#(To unattach, kill "ldattach")
+It is also possible to use ldattach.
+For a master mode, the line discipline code is 28 for now
+$ sudo ldattach 28 /dev/ttyS0
+(To unattach, kill "ldattach")
+For a slave mode, the line discipline code is 29
+or module option master = 0 can be used.
 
 # Run from another terminal
 $ dmesg
