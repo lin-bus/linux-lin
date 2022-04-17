@@ -1556,6 +1556,7 @@ static struct sllin *sll_alloc(dev_t line)
 	int i;
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
 	int size;
+	struct can_ml_priv *can_ml;
 #endif
 	struct net_device *dev = NULL;
 	struct sllin       *sl;
@@ -1602,7 +1603,8 @@ static struct sllin *sll_alloc(dev_t line)
 
 	sl = netdev_priv(dev);
 	#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
-		dev->ml_priv = (void *)sl + ALIGN(sizeof(*sl), NETDEV_ALIGN);
+		can_ml = (void *)sl + ALIGN(sizeof(*sl), NETDEV_ALIGN);
+		can_set_ml_priv(dev, can_ml);
 	#endif
 	/* Initialize channel control data */
 	sl->magic = SLLIN_MAGIC;
