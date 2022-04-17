@@ -140,7 +140,7 @@ int linc_parse_frame_configuration(struct linc_lin_state *linc_lin_state, xmlDoc
 								return ret;
 
 							//printf("Data = %d\n", val);
-							snprintf((char *)&tmp_fr_entry.data[indx], 1, "%i", val);
+							tmp_fr_entry.data[indx] = val;
 							indx++;
 						}
 						tmp_node2 = tmp_node2->next;
