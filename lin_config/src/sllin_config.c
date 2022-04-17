@@ -271,9 +271,11 @@ int sllin_config(struct linc_lin_state *linc_lin_state)
 		return LIN_EXIT_OK;
 	}
 
-	ret = sllin_bcm_config(linc_lin_state, &sllin_connection);
-	if (ret < 0)
-		return ret;
+	if (linc_lin_state->master_status) {
+		ret = sllin_bcm_config(linc_lin_state, &sllin_connection);
+		if (ret < 0)
+			return ret;
+	}
 
 	ret = sllin_interface_up(linc_lin_state, &sllin_connection);
 	if (ret < 0)

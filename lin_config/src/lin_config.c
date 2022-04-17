@@ -51,6 +51,8 @@ void linc_explain(int argc, char *argv[])
 	fprintf(stderr, "General options:\n");
 	fprintf(stderr, " -c <FILE>  Path to XML configuration file in PCLIN format\n");
 	fprintf(stderr, "            If this parameter is not set, file '"PCL_DEFAULT_CONFIG"' is used\n");
+	fprintf(stderr, " -m         Override mode found in the configuration file to master\n");
+	fprintf(stderr, " -s         Override mode found in the configuration file to slave\n");
 	fprintf(stderr, "\n");
 	fprintf(stderr, "PCAN-LIN specific options:\n");
 	fprintf(stderr, " -f         Store the active configuration into internal flash memory\n");
@@ -71,9 +73,10 @@ int main(int argc, char *argv[])
 	int opt;
 	char *c;
 	int flags = 0;
+	int master_override = -1;
 	char *filename = NULL;
 
-	while ((opt = getopt(argc, argv, "rfc:ad")) != -1) {
+	while ((opt = getopt(argc, argv, "rfc:msad")) != -1) {
 		switch (opt) {
 		case 'r':
 			flags |= RESET_DEVICE_fl;
@@ -89,6 +92,12 @@ int main(int argc, char *argv[])
 			break;
 		case 'd':
 			flags |= SLLIN_DETACH_fl;
+			break;
+		case 'm':
+			master_override = 1;
+			break;
+		case 's':
+			master_override = 0;
 			break;
 		default:
 			linc_explain(argc, argv);
@@ -106,6 +115,9 @@ int main(int argc, char *argv[])
 	ret = linc_parse_configuration(filename, &linc_lin_state);
 	if (!ret)
 		printf("Configuration file %s parsed correctly\n", filename);
+
+	if (master_override >= 0)
+		linc_lin_state.master_status = master_override;
 
 	/* Parse device type and path */
 	c = argv[optind]; /* "devtype:devpath" */
