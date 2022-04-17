@@ -23,7 +23,13 @@
 #include "lin_config.h"
 #include "linux/lin_bus.h"
 
-#define SLLIN_LDISC					25
+#ifndef N_SLLIN
+#define N_SLLIN			28
+#endif
+#ifndef N_SLLIN_SLAVE
+#define N_SLLIN_SLAVE		(N_SLLIN + 1)
+#endif
+
 struct bcm_msg {
 	struct bcm_msg_head msg_head;
 	struct can_frame frame;
@@ -216,9 +222,14 @@ int sllin_bcm_config(struct linc_lin_state *linc_lin_state,
 int sllin_config(struct linc_lin_state *linc_lin_state)
 {
 	int tty;
-	int ldisc = SLLIN_LDISC;
+	int ldisc;
 	int ret;
 	struct sllin_connection sllin_connection;
+
+	if (linc_lin_state->master_status)
+		ldisc = N_SLLIN;
+	else
+		ldisc = N_SLLIN_SLAVE;
 
 	tty = open(linc_lin_state->dev, O_WRONLY | O_NOCTTY);
 	if (tty < 0) {
