@@ -434,7 +434,13 @@ static void sllin_send_canfr(struct sllin *sl, canid_t id, char *data, int len)
 	skb->ip_summed = CHECKSUM_UNNECESSARY;
 	memcpy(skb_put(skb, sizeof(struct can_frame)),
 	       &cf, sizeof(struct can_frame));
-	netif_rx(skb);
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 18, 0)
+	if (!in_interrupt())
+		netif_rx_ni(skb);
+	else
+#endif
+		netif_rx(skb);
 
 	sl->dev->stats.rx_packets++;
 	sl->dev->stats.rx_bytes += cf.can_dlc;
