@@ -1803,11 +1803,18 @@ static void sllin_close(struct tty_struct *tty)
 	/* This will complete via sl_free_netdev */
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 17, 0)
 static int sllin_hangup(struct tty_struct *tty)
 {
 	sllin_close(tty);
 	return 0;
 }
+#else /* >= 5.17.0 */
+static void sllin_hangup(struct tty_struct *tty)
+{
+	sllin_close(tty);
+}
+#endif
 
 /* Perform I/O control on an active SLLIN channel. */
 static int sllin_ioctl(struct tty_struct *tty, struct file *file,
