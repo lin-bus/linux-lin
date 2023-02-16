@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: (GPL-2.0-or-later OR BSD-3-Clause) */
+
 #ifndef _LIN_CONFIG_H_
 #define _LIN_CONFIG_H_
 
