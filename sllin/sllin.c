@@ -1817,8 +1817,13 @@ static void sllin_hangup(struct tty_struct *tty)
 #endif
 
 /* Perform I/O control on an active SLLIN channel. */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 16, 0)
 static int sllin_ioctl(struct tty_struct *tty, struct file *file,
 		       unsigned int cmd, unsigned long arg)
+#else /* >= 5.16.0 */
+static int sllin_ioctl(struct tty_struct *tty,
+		       unsigned int cmd, unsigned long arg)
+#endif
 {
 	struct sllin *sl = (struct sllin *) tty->disc_data;
 	unsigned int tmp;
@@ -1838,7 +1843,11 @@ static int sllin_ioctl(struct tty_struct *tty, struct file *file,
 		return -EINVAL;
 
 	default:
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 16, 0)
 		return tty_mode_ioctl(tty, file, cmd, arg);
+#else /* >= 5.16.0 */
+		return tty_mode_ioctl(tty, cmd, arg);
+#endif
 	}
 }
 
