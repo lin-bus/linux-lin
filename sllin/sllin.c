@@ -96,7 +96,7 @@ MODULE_PARM_DESC(led_delay,
                  "blink delay time for activity leds (msecs, default: 50).");
 #endif /* SLLIN_LED_TRIGGER */
 
-static __initdata const char banner[] =
+static const char banner[] =
 	KERN_INFO "sllin: serial line LIN interface driver\n";
 
 MODULE_ALIAS_LDISC(N_SLLIN);
