@@ -1383,6 +1383,10 @@ static int sllin_kwthread(void *ptr)
 		case SLSTATE_ID_SENT:
 			hrtimer_cancel(&sl->rx_timer);
 			sl->id_to_send = false;
+			/* If we don't receive anything, timer will "unblock" us */
+			hrtimer_start(&sl->rx_timer,
+				ktime_add(ktime_get(), sl->rx_timer_timeout),
+				HRTIMER_MODE_ABS);
 			if (sl->data_to_send) {
 				sllin_send_tx_buff(sl);
 				sl->lin_state = SLSTATE_RESPONSE_SENT;
@@ -1395,10 +1399,6 @@ static int sllin_kwthread(void *ptr)
 					sl->rx_expect = SLLIN_BUFF_DATA + 2;
 				}
 				sl->lin_state = SLSTATE_RESPONSE_WAIT;
-				/* If we don't receive anything, timer will "unblock" us */
-				hrtimer_start(&sl->rx_timer,
-					ktime_add(ktime_get(), sl->rx_timer_timeout),
-					HRTIMER_MODE_ABS);
 				goto slstate_response_wait;
 			}
 			break;
