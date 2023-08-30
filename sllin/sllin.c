@@ -74,6 +74,10 @@
 #include <linux/can/can-ml.h>
 #endif
 
+#ifndef fallthrough
+#define fallthrough do {} while(0)
+#endif
+
 /* Should be in include/linux/tty.h */
 #define N_SLLIN			28
 #define N_SLLIN_SLAVE		29
@@ -1200,7 +1204,6 @@ static enum hrtimer_restart sllin_rx_timeout_handler(struct hrtimer *hrtimer)
 			(sl->rx_cnt <= SLLIN_BUFF_DATA) ||
 			((!sl->rx_len_unknown) &&
 			(sl->rx_cnt < sl->rx_expect))) {
-		sllin_report_error(sl, LIN_ERR_RX_TIMEOUT);
 		set_bit(SLF_TMOUTEVENT, &sl->flags);
 	} else {
 		sllin_slave_finish_rx_msg(sl);
@@ -1288,6 +1291,7 @@ static int sllin_kwthread(void *ptr)
 
 		if (test_and_clear_bit(SLF_TMOUTEVENT, &sl->flags)) {
 			netdev_dbg(sl->dev, "sllin_kthread TMOUTEVENT\n");
+			sllin_report_error(sl, LIN_ERR_RX_TIMEOUT);
 			sllin_reset_buffs(sl);
 
 			sl->lin_state = SLSTATE_IDLE;
@@ -1385,9 +1389,8 @@ static int sllin_kwthread(void *ptr)
 			sl->id_to_send = false;
 			if (sl->data_to_send) {
 				sllin_send_tx_buff(sl);
-				sl->lin_state = SLSTATE_RESPONSE_SENT;
 				sl->rx_expect = sl->tx_lim;
-				goto slstate_response_sent;
+				goto slstate_response_sent_state_entry;
 			} else {
 				if (sl->resp_len_known) {
 					sl->rx_expect = sl->rx_lim;
@@ -1431,15 +1434,14 @@ slstate_response_wait:
 						kfree_skb(sl->tx_req_skb);
 						netif_wake_queue(sl->dev);
 
-						sl->lin_state = SLSTATE_RESPONSE_SENT;
-						goto slstate_response_sent;
+						goto slstate_response_sent_state_entry;
 					}
 				} else {
 					sl->lin_state = SLSTATE_RESPONSE_WAIT_BUS;
 				}
 			}
+			fallthrough;
 
-			/* Be aware, no BREAK here */
 		case SLSTATE_RESPONSE_WAIT_BUS:
 			if (sl->rx_cnt < sl->rx_expect)
 				continue;
@@ -1509,8 +1511,14 @@ slstate_response_wait:
 			sl->lin_state = SLSTATE_IDLE;
 			break;
 
+slstate_response_sent_state_entry:
+			hrtimer_start(&sl->rx_timer,
+				      ktime_add(ktime_get(), sl->rx_timer_timeout),
+				      HRTIMER_MODE_ABS);
+			sl->lin_state = SLSTATE_RESPONSE_SENT;
+			fallthrough;
+
 		case SLSTATE_RESPONSE_SENT:
-slstate_response_sent:
 			if (sl->rx_cnt < sl->tx_lim)
 				continue;
 
