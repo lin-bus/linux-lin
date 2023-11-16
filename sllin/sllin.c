@@ -225,11 +225,17 @@ struct sllin {
 
 static struct net_device **sllin_devs;
 static int sllin_configure_frame_cache(struct sllin *sl, struct can_frame *cf);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
+static void sllin_slave_receive_buf(struct tty_struct *tty,
+			      const unsigned char *cp, const char *fp, size_t count);
+static void sllin_master_receive_buf(struct tty_struct *tty,
+			      const unsigned char *cp, const char *fp, size_t count);
+#else
 static void sllin_slave_receive_buf(struct tty_struct *tty,
 			      const unsigned char *cp, const char *fp, int count);
 static void sllin_master_receive_buf(struct tty_struct *tty,
 			      const unsigned char *cp, const char *fp, int count);
-
+#endif
 
 /* Values of two parity bits in LIN Protected
    Identifier for each particular LIN ID */
@@ -667,8 +673,13 @@ static void sll_setup(struct net_device *dev)
 /******************************************
   Routines looking at TTY side.
  ******************************************/
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
+static void sllin_master_receive_buf(struct tty_struct *tty,
+			      const unsigned char *cp, const char *fp, size_t count)
+#else
 static void sllin_master_receive_buf(struct tty_struct *tty,
 			      const unsigned char *cp, const char *fp, int count)
+#endif
 {
 	struct sllin *sl = (struct sllin *) tty->disc_data;
 
@@ -910,9 +921,13 @@ static void sllin_slave_finish_rx_msg(struct sllin *sl)
 	sl->rx_len_unknown = false; /* We do know exact length of the header */
 	sl->header_received = false;
 }
-
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
+static void sllin_slave_receive_buf(struct tty_struct *tty,
+			      const unsigned char *cp, const char *fp, size_t count)
+#else
 static void sllin_slave_receive_buf(struct tty_struct *tty,
 			      const unsigned char *cp, const char *fp, int count)
+#endif
 {
 	struct sllin *sl = (struct sllin *) tty->disc_data;
 	int lin_id;
@@ -1024,12 +1039,16 @@ static void sllin_slave_receive_buf(struct tty_struct *tty,
 #define sllin_receive_buf_fp_const
 #endif
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
+static void sllin_receive_buf(struct tty_struct *tty, const u8 *cp,
+                              const u8 *fp, size_t count)
+#else
 static void sllin_receive_buf(struct tty_struct *tty, const unsigned char *cp,
                               sllin_receive_buf_fp_const char *fp, int count)
+#endif
 {
 	struct sllin *sl = (struct sllin *) tty->disc_data;
-	netdev_dbg(sl->dev, "sllin_receive_buf invoked, count = %u\n", count);
-
+	netdev_dbg(sl->dev, "sllin_receive_buf invoked, count = %lu\n", (unsigned long)count);
 	if (!sl || sl->magic != SLLIN_MAGIC || !netif_running(sl->dev))
 		return;
 
