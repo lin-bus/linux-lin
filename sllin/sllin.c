@@ -227,9 +227,9 @@ static struct net_device **sllin_devs;
 static int sllin_configure_frame_cache(struct sllin *sl, struct can_frame *cf);
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
 static void sllin_slave_receive_buf(struct tty_struct *tty,
-			      const unsigned char *cp, const char *fp, size_t count);
+			      const u8 *cp, const u8 *fp, size_t count);
 static void sllin_master_receive_buf(struct tty_struct *tty,
-			      const unsigned char *cp, const char *fp, size_t count);
+			      const u8 *cp, const u8 *fp, size_t count);
 #else
 static void sllin_slave_receive_buf(struct tty_struct *tty,
 			      const unsigned char *cp, const char *fp, int count);
@@ -675,7 +675,7 @@ static void sll_setup(struct net_device *dev)
  ******************************************/
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
 static void sllin_master_receive_buf(struct tty_struct *tty,
-			      const unsigned char *cp, const char *fp, size_t count)
+			      const u8 *cp, const u8 *fp, size_t count)
 #else
 static void sllin_master_receive_buf(struct tty_struct *tty,
 			      const unsigned char *cp, const char *fp, int count)
@@ -923,7 +923,7 @@ static void sllin_slave_finish_rx_msg(struct sllin *sl)
 }
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
 static void sllin_slave_receive_buf(struct tty_struct *tty,
-			      const unsigned char *cp, const char *fp, size_t count)
+			      const u8 *cp, const u8 *fp, size_t count)
 #else
 static void sllin_slave_receive_buf(struct tty_struct *tty,
 			      const unsigned char *cp, const char *fp, int count)
