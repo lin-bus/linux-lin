@@ -1720,8 +1720,12 @@ static int sllin_open_common(struct tty_struct *tty, bool setup_master)
 
 		sl->lin_state = SLSTATE_IDLE;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0)
+		hrtimer_setup(&sl->rx_timer, sllin_rx_timeout_handler, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+#else
 		hrtimer_init(&sl->rx_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 		sl->rx_timer.function = sllin_rx_timeout_handler;
+#endif
 		/* timeval_to_ktime(msg_head->ival1); */
 		sl->rx_timer_timeout = ns_to_ktime(
 			(1000000000l / sl->lin_baud) *
