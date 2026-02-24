@@ -1,0 +1,71 @@
+From 3d941169431ab9c362412798b8e1702ba4c8a800 Mon Sep 17 00:00:00 2001
+From: Daniel Trnka <daniel.trnka@gmail.com>
+Date: Sun, 7 Sep 2025 09:34:29 +0200
+Subject: [PATCH 1/2] serial: add rx_trigger API to uart_ops
+
+Introduce rx_trigger() callback in struct uart_ops to configure
+RX FIFO trigger conditions based on the number of received bytes
+or an idle timeout in nanoseconds. This allows communication
+protocols to react immediately to incoming data without waiting
+for the RX buffer to fill or for a timeout.
+---
+ include/linux/serial_core.h      | 21 +++++++++++++++++++++
+ include/uapi/linux/serial_core.h |  5 +++++
+ 2 files changed, 26 insertions(+)
+
+diff --git a/include/linux/serial_core.h b/include/linux/serial_core.h
+index 84b4648ead7..ef2bfe2478d 100644
+--- a/include/linux/serial_core.h
++++ b/include/linux/serial_core.h
+@@ -344,6 +344,25 @@ struct gpio_desc;
+  *	Locking: none.
+  *	Interrupts: caller dependent.
+  *
++ * @rx_trigger: ``int (*)(struct uart_port *port, int mode,
++ *		int *rx_trigger_bytes, int *rx_trigger_idle_time)``
++ *
++ * Configure the RX trigger condition based on either the number of received
++ * bytes or a period of RX line idleness, expressed in nanoseconds.
++ *
++ * Supported @mode:
++ *  UART_RX_TRIGGER_MODE_SET
++ *		Apply the trigger using the values in @rx_trigger_bytes and
++ *		@rx_trigger_idle_time.
++ *  UART_RX_TRIGGER_MODE_CHECK_ROUND_DOWN
++ *  UART_RX_TRIGGER_MODE_CHECK_ROUND_UP
++ *		Round the requested values down or up to the nearest hardware-
++ *		supported value. The adjusted values are written back to
++ *		@rx_trigger_bytes and @rx_trigger_idle_time.
++ *  UART_RX_TRIGGER_MODE_GET
++ *		Return the currently configured trigger values via
++ *		@rx_trigger_bytes and @rx_trigger_idle_time.
++ *
+  * @poll_init: ``int ()(struct uart_port *port)``
+  *
+  *	Called by kgdb to perform the minimal hardware initialization needed to
+@@ -399,6 +418,8 @@ struct uart_ops {
+ 	void		(*config_port)(struct uart_port *, int);
+ 	int		(*verify_port)(struct uart_port *, struct serial_struct *);
+ 	int		(*ioctl)(struct uart_port *, unsigned int, unsigned long);
++	int		(*rx_trigger)(struct uart_port *, int mode, int *rx_trigger_bytes,
++		int *rx_trigger_idle_time);
+ #ifdef CONFIG_CONSOLE_POLL
+ 	int		(*poll_init)(struct uart_port *);
+ 	void		(*poll_put_char)(struct uart_port *, unsigned char);
+diff --git a/include/uapi/linux/serial_core.h b/include/uapi/linux/serial_core.h
+index 9c007a10633..e3445d4edc9 100644
+--- a/include/uapi/linux/serial_core.h
++++ b/include/uapi/linux/serial_core.h
+@@ -234,4 +234,9 @@
+ /* Generic type identifier for ports which type is not important to userspace. */
+ #define PORT_GENERIC	(-1)
+ 
++#define UART_RX_TRIGGER_MODE_SET 0
++#define UART_RX_TRIGGER_MODE_CHECK_ROUND_DOWN 1
++#define UART_RX_TRIGGER_MODE_CHECK_ROUND_UP 2
++#define UART_RX_TRIGGER_MODE_GET 3
++
+ #endif /* _UAPILINUX_SERIAL_CORE_H */
+-- 
+2.34.1
+

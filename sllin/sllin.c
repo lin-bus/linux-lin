@@ -65,6 +65,7 @@
 #include <linux/hrtimer.h>
 #include <linux/version.h>
 #include "linux/lin_bus.h"
+#include <linux/serial_core.h>
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,11,0)
 #include <uapi/linux/sched/types.h>
@@ -1677,6 +1678,20 @@ static int sllin_open_common(struct tty_struct *tty, bool setup_master)
 	   the simplest one.
 	 */
 	rtnl_lock();
+
+#ifdef UART_RX_TRIGGER_MODE_SET
+	struct uart_state *state = tty->driver_data;
+	if (state) {
+		struct uart_port *uport = state->uart_port;
+		if (uport && uport->ops->rx_trigger) {
+			int rx_trigger_bytes = 1;
+			err = uport->ops->rx_trigger(uport, UART_RX_TRIGGER_MODE_SET, &rx_trigger_bytes, NULL);
+			if (err) {
+				pr_err("sllin: Failed to configure rx_trigger: %d", err);
+			}
+		}
+	}
+#endif
 
 	/* Collect hanged up channels. */
 	sll_sync();

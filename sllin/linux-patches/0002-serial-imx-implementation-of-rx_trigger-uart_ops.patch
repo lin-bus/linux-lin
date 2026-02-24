@@ -1,0 +1,94 @@
+From 639d5c8ccaf36220422f0da422e73577f4276c4b Mon Sep 17 00:00:00 2001
+From: Daniel Trnka <daniel.trnka@gmail.com>
+Date: Sun, 7 Sep 2025 09:46:01 +0200
+Subject: [PATCH 2/2] serial: imx: implementation of rx_trigger uart_ops
+
+- rx_trigger_bytes can be between 1 and 32
+- rx_trigger_idle_time not supported (AGTIM fixed at 8 characters)
+---
+ drivers/tty/serial/imx.c | 55 ++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 55 insertions(+)
+
+diff --git a/drivers/tty/serial/imx.c b/drivers/tty/serial/imx.c
+index 500dfc009d0..6ac5988ba34 100644
+--- a/drivers/tty/serial/imx.c
++++ b/drivers/tty/serial/imx.c
+@@ -175,6 +175,7 @@
+ #define DRIVER_NAME "IMX-uart"
+ 
+ #define UART_NR 8
++#define FIFO_MAX_DEPTH 32
+ 
+ /* i.MX21 type uart runs on all i.mx except i.MX1 and i.MX6q */
+ enum imx_uart_type {
+@@ -2054,6 +2055,59 @@ static int imx_uart_rs485_config(struct uart_port *port, struct ktermios *termio
+ 	return 0;
+ }
+ 
++/*
++ * rx_trigger_bytes can be between 1 and 32
++ * rx_trigger_idle_time is unsupported - AGTIM is fixed at 8 characters
++ */
++static int imx_uart_rx_trigger(struct uart_port *port, int mode,
++		int *rx_trigger_bytes, int *rx_trigger_idle_time)
++{
++	struct imx_port *sport = to_imx_port(port);
++	u32 ufcr;
++	unsigned int txwl, rxwl;
++
++	if (rx_trigger_idle_time) {
++		return -ENOTSUPP;
++	}
++
++	if (!rx_trigger_bytes) {
++		return -EINVAL;
++	}
++
++	/* read currently set FIFO thresholds */
++	ufcr = imx_uart_readl(sport, UFCR);
++	rxwl = (ufcr >> UFCR_RXTL_SHF) & UFCR_RXTL_MASK;
++	txwl = ufcr >> UFCR_TXTL_SHF;
++
++	switch (mode) {
++		case UART_RX_TRIGGER_MODE_SET:
++			if (*rx_trigger_bytes < 1 || *rx_trigger_bytes > FIFO_MAX_DEPTH) {
++				return -EINVAL;
++			}
++
++			imx_uart_setup_ufcr(sport, txwl, *rx_trigger_bytes);
++			break;
++
++		case UART_RX_TRIGGER_MODE_CHECK_ROUND_DOWN:
++		case UART_RX_TRIGGER_MODE_CHECK_ROUND_UP:
++			if (*rx_trigger_bytes < 1) {
++				*rx_trigger_bytes = 1;
++			}
++
++			if (*rx_trigger_bytes > FIFO_MAX_DEPTH) {
++				*rx_trigger_bytes = FIFO_MAX_DEPTH;
++			}
++
++			break;
++		case UART_RX_TRIGGER_MODE_GET:
++			*rx_trigger_bytes = rxwl;
++			break;
++		default:
++			return -ENOTSUPP;
++	}
++	return 0;
++}
++
+ static const struct uart_ops imx_uart_pops = {
+ 	.tx_empty	= imx_uart_tx_empty,
+ 	.set_mctrl	= imx_uart_set_mctrl,
+@@ -2070,6 +2124,7 @@ static const struct uart_ops imx_uart_pops = {
+ 	.type		= imx_uart_type,
+ 	.config_port	= imx_uart_config_port,
+ 	.verify_port	= imx_uart_verify_port,
++	.rx_trigger	= imx_uart_rx_trigger,
+ #if defined(CONFIG_CONSOLE_POLL)
+ 	.poll_init      = imx_uart_poll_init,
+ 	.poll_get_char  = imx_uart_poll_get_char,
+-- 
+2.34.1
+
