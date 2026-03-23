@@ -6,7 +6,11 @@ and, to some extent, as a LIN slave.
 Communication to userspace is exposed as a CAN netdevice (`sllin0`), so you can
 use standard tools like `ip`, `candump`, and `cangen`.
 
----
+Features:
+- Slave Mode Answer to RTR Frames (via Cache response)
+- Slave Mode Listen only
+- Master Mode Send RTR Frames (Break,Sync + ID) and wait for slave answer (Data + CRC)
+- Master Mode Send Complete LIN Frames
 
 ## Requirements
 
@@ -19,8 +23,6 @@ use standard tools like `ip`, `candump`, and `cangen`.
 Optional:
 - `slcan_attach` or project-specific attach tools/scripts
 
----
-
 ## Build
 
 Inside the `sllin` directory:
@@ -30,8 +32,6 @@ make
 ```
 
 This builds the kernel module `sllin.ko`.
-
----
 
 ## Load the module
 
@@ -58,8 +58,6 @@ Check status:
 dmesg | tail -n 20
 ```
 
----
-
 ## Attach a TTY to sllin
 
 ### Option A: `ldattach`
@@ -81,8 +79,6 @@ If a compatible helper tool is available (need to be patched first with patch un
 sudo slcan_attach -w /dev/ttyS0
 ```
 
----
-
 ## Bring the interface up
 
 ```bash
@@ -92,8 +88,6 @@ ip link show dev sllin0
 ```
 
 `state UNKNOWN` is expected for this interface type.
-
----
 
 ## Cache runtime behavior
 
