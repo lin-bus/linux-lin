@@ -3,7 +3,7 @@
 `sllin` is a TTY line discipline that allows a Linux system to act as a LIN master
 and, to some extent, as a LIN slave.
 
-Communication to userspace is exposed as a CAN netdevice (`sllin0`), so you can
+Communication to userspace is exposed as a CAN netdevice (`sllin0`, `sllin1`, ...), so you can
 use standard tools like `ip`, `candump`, and `cangen`.
 
 Features:
@@ -71,6 +71,27 @@ On modern kernels, these numbers are already assigned (`N_MCTP`,
 `N_DEVELOPMENT`). For out-of-tree drivers, the line discipline number
 registered by the driver must match the running kernel setup.
 
+The kernel reports assignemnt of the line discipline numbers
+by proc entry `/proc/tty/ldiscs`. The number assigned to the sllin
+master can be obtained by
+
+```bash
+sed -n -e 's/^[n_]*sllin[ \t]*\([0-9]*\)$/\1/p' /proc/tty/ldiscs
+```
+
+for the slave
+
+```bash
+sed -n -e 's/^[n_]*sllin-slave[ \t]*\([0-9]*\)$/\1/p' /proc/tty/ldiscs
+```
+
+The line discipline numbers can be adjusted in the `sllin.c` source file
+
+```
+#define N_SLLIN                 28
+#define N_SLLIN_SLAVE           29
+```
+
 ### Option B: attach helper (`slcan_attach`-style)
 
 If a compatible helper tool is available (need to be patched first with patch under slin/canutils-patches) :
@@ -119,7 +140,7 @@ cangen sllin0 -e -I 0x50 -n 1 -L 2 -D a1b2
 cangen sllin0 -R -I 0x10 -n 3 -L 0
 
 # clear cache response
-# can_id = 0x10 (ID) + 0x40 (CACHE_RESPONSE) = 0x50 
+# can_id = 0x10 (ID) + 0x40 (CACHE_RESPONSE) = 0x50
 # BUT DLC = 0 -> Disable cache response
 cangen sllin0 -e -I 0x50 -n 1 -L 0
 ```
